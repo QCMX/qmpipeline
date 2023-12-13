@@ -1,0 +1,420 @@
+
+# Before running this need to
+# - calibrate mixers (calibration db)
+# - set time of flight (config.time_of_flight)
+# - set input adc offsets (config.adcoffset)
+# - electrical delay correction (config.PHASE_CORR)
+# - resonator IF, readout power
+
+import time
+import numpy as np
+import matplotlib.pyplot as plt
+import importlib
+import qm.qua as qua
+
+from helpers import data_path, mpl_pause, plt2dimg, plt2dimg_update
+from qm_helpers import int_forloop_values
+
+import configuration as config
+import qminit
+
+qmm = qminit.connect()
+
+#%%
+importlib.reload(config)
+importlib.reload(qminit)
+
+filename = '{datetime}_qm_qubitspec_largewindow'
+fpath = data_path(filename, datesuffix='_qm')
+
+Navg = 5000
+
+f_min = 350e6
+f_max = 370e6
+df = 10e6
+freqs = int_forloop_values(f_min, f_max, df)
+
+saturationdelay = 2000 // 4 # cycles
+
+try:    
+    Vgate = gate.get_voltage()
+except:
+    Vgate = np.nan
+
+with qua.program() as qubit_longreadout:
+    n = qua.declare(int)
+    n_st = qua.declare_stream()
+    f = qua.declare(int)
+    rand = qua.lib.Random()
+    adc_st = qua.declare_stream(adc_trace=True)
+
+    with qua.for_(n, 0, n < Navg, n + 1):
+        with qua.for_(f, f_min, f <= f_max, f + df):
+            qua.update_frequency('qubit', f) # takes long time
+            qua.reset_phase('resonator')
+            qua.reset_phase('qubit')
+            #qua.wait(rand.rand_int(50)+4, 'resonator')
+            qua.align()
+            qua.measure('short_readout', 'resonator', adc_st)
+            qua.wait(saturationdelay, 'qubit')
+            qua.play('saturation', 'qubit')
+            qua.wait(config.cooldown_clk, 'resonator')
+        qua.save(n, n_st)
+
+    with qua.stream_processing():
+        n_st.save('iteration')
+        adc_st.input1().average().save('adc1')
+        adc_st.input2().average().save('adc2')
+        #adc_st.input1().buffer(len(freqs)).average().save('adc1')
+        #adc_st.input2().buffer(len(freqs)).average().save('adc2')
+
+
+# #%%
+# from qm import LoopbackInterface, SimulationConfig
+# simulate_config = SimulationConfig(
+#     duration=20000, # cycles
+#     simulation_interface=LoopbackInterface(([('con1', 1, 'con1', 1), ('con1', 2, 'con1', 2)])))
+# job = qmm.simulate(config.qmconfig, qubit_longreadout, simulate_config)  # do simulation with qmm
+
+# plt.figure()
+# job.get_simulated_samples().con1.plot()  # visualize played pulses
+# #plt.savefig(fpath+"_pulses.png")
+# #%%
+
+qm = qmm.open_qm(config.qmconfig)
+qminit.octave_setup_resonator(qm, config, short_readout_gain=True)
+qminit.octave_setup_qubit(qm, config)
+
+job = qm.execute(qubit_longreadout)  # execute QUA program
+tstart = time.time()
+
+res_handles = job.result_handles
+iteration_handle = res_handles.get('iteration')
+adc1_handle = res_handles.get('adc1')
+adc2_handle = res_handles.get('adc2')
+# adc1_handle.wait_for_values(1), adc2_handle.wait_for_values(1)
+iteration_handle.wait_for_values(1)
+
+
+try:
+    while res_handles.is_processing():
+        iteration = iteration_handle.fetch_all() + 1
+        print(f"n={iteration}")
+        mpl_pause(0.5)
+except Exception as e:
+    job.halt()
+    raise e
+except KeyboardInterrupt:
+    job.halt()
+print("Execution time", time.time()-tstart, "s")
+
+#%%
+
+
+
+#%%
+# Live plotting
+fig, axs = plt.subplots(nrows=2, sharex=True, sharey=True)
+artists = []
+#fig.suptitle('qubit spectroscopy analysis', fontsize=10)
+axs[0].set_xlabel('ADC1')
+axs[1].set_ylabel('ADC2')
+fig.show()
+try:
+    while res_handles.is_processing():    
+        iteration = iteration_handle.fetch_all() + 1
+        # if iteration is None:
+        #     mpl_pause(0.2)
+        #     continue
+        # iteration += 1
+        adc1 = adc1_handle.fetch_all()
+        adc2 = adc2_handle.fetch_all()
+        # if adc1 is None or adc2 is None:
+        #     continue
+        if artists:
+            artists[0].set_ydata(adc1[1])
+            artists[1].set_ydata(adc2[1])
+        else:
+            artists.append(axs[0].plot(np.arange(adc1.shape[1]), adc1[1])[0])
+            artists.append(axs[1].plot(np.arange(adc1.shape[1]), adc2[1])[0])
+        for ax in axs:
+            ax.relim()
+            ax.autoscale()
+            ax.autoscale_view()
+        fig.suptitle(f'{iteration} / {Navg}', fontsize=10)
+        print(f"n={iteration}, remaining: {(Navg-iteration) * (time.time()-tstart)/iteration:.0f}s")
+        #plt.pause(0.5)
+        mpl_pause(1)
+except KeyboardInterrupt:
+    job.halt()
+
+print(f"execution time: {time.time()-tstart:.1f}s")
+print(job.execution_report())
+
+adc1 = res_handles.get('adc1').fetch_all()
+adc2 = res_handles.get('adc2').fetch_all()
+artists[0].set_ydata(adc1[1])
+artists[1].set_ydata(adc2[1])
+
+np.savez_compressed(
+    fpath, adc1=adc1, adc2=adc2, Navg=Navg,
+    saturationdelay_cycles=saturationdelay, Vgate=Vgate,
+    config=config.meta)
+
+
+#%%
+
+plt.figure()
+plt.plot(np.arange(adc1[0].size), adc1.T)
+
+
+#%%
+fig, axs = plt.subplots(nrows=1, sharex=True)
+axs[0].set_title('Single run (Check ADCs saturation: |ADC|<2048)', fontsize=10)
+axs[0].plot(adc1_single_run, label='I')
+axs[0].plot(adc2_single_run, label='Q')
+axs[0].set_ylabel('ADC units')
+axs[0].legend()
+
+axs[1].set_title(f'Averaged run n={Navg} (Check ToF ({config.time_of_flight}ns) & DC Offset)', fontsize=10)
+axs[1].plot(adc1)
+axs[1].plot(adc2)
+axs[1].set_ylabel('ADC units')
+axs[-1].set_xlabel('sample (ns)')
+readoutpower = 10*np.log10(config.readout_amp**2 * 10) # V to dBm
+fig.suptitle(
+    f"LO={config.resonatorLO/1e9:.5f}GHz   IF={config.resonatorIF/1e6:.3f}MHz"
+    f"   Cooldown {config.cooldown_clk*4}ns   Navg {Navg}"
+    f"\n{config.readout_len}ns readout at {readoutpower:.1f}dBm{config.resonator_output_gain:+.1f}dB"
+    f",   {config.resonator_input_gain:+.1f}dB input gain"
+    f"\n{config.qmconfig['elements']['resonator']['smearing']}ns smearing", fontsize=10)
+fig.tight_layout()
+fig.savefig(fpath+'.png')
+
+
+#%%
+qm = qmm.open_qm(config.qmconfig)
+qminit.octave_setup_resonator(qm, config, short_readout_gain=True)
+qminit.octave_setup_qubit(qm, config)
+
+# Execute program
+job = qm.execute(qubit_delay)
+tstart = time.time()
+
+res_handles = job.result_handles
+I_handle = res_handles.get('I')
+I_handle.wait_for_values(1)
+Q_handle = res_handles.get('Q')
+Q_handle.wait_for_values(1)
+iteration_handle = res_handles.get('iteration')
+iteration_handle.wait_for_values(1)
+
+# Live plotting
+f2 = freqs
+data = np.full((len(delays), len(freqs)), np.nan)
+fig, ax = plt.subplots()
+img = plt2dimg(ax, delays_ns, f2, np.angle(data))
+ax.set_xlabel('delay / ns')
+ax.set_ylabel('f2')
+ax.set_title('qubit analysis with delay')
+
+try:
+    while res_handles.is_processing():
+        iteration = iteration_handle.fetch_all() + 1
+        I = I_handle.fetch_all().T
+        Q = Q_handle.fetch_all().T
+        Z = I + Q*1j
+        ax.set_title(f'{iteration}/{Navg}')
+        plt2dimg_update(img, np.angle(Z))
+        print(f"n={iteration}, remaining: {(Navg-iteration) * (time.time()-tstart)/iteration:.0f}s")
+        mpl_pause(0.5)
+except Exception as e:
+    job.halt()
+    raise e
+except KeyboardInterrupt:
+    job.halt()
+print("Execution time", time.time()-tstart, "s")
+
+# Get and save data
+Nactual = iteration_handle.fetch_all()+1
+I = I_handle.fetch_all().T
+Q = Q_handle.fetch_all().T
+Zraw = I + 1j * Q
+
+np.savez_compressed(
+    fpath, Navg=Navg, freqs=freqs, Zraw=Zraw, Nactual=Nactual,
+    delays_clk=delays, delays_ns=delays_ns, saturationdelay=saturationdelay,
+    config=config.meta, Vgate=Vgate)
+
+# Final plot
+arg = np.unwrap(np.unwrap(np.angle(Zraw), axis=1), axis=0)
+plt2dimg_update(img, arg)
+fig.tight_layout()
+#fig.savefig(fpath+'.png', dpi=300)
+
+
+Zcorr = Zraw / config.short_readout_len * 2**12
+
+fig, axs = plt.subplots(nrows=3, sharex=True, layout='constrained')
+axs[0].fill_between(
+    [delays_ns[0], delays_ns[-1]],
+    [saturationdelay*4, saturationdelay*4],
+    [saturationdelay*4+config.saturation_len, saturationdelay*4+config.saturation_len],
+    color='C1', alpha=0.3, label='saturation')
+axs[0].fill_between(delays_ns, delays_ns, delays_ns+config.short_readout_len, color='C0', alpha=0.3, label='readout')
+axs[0].plot(delays_ns, delays_ns, '.-', color='C0', alpha=0.3, label='readout')
+im = plt2dimg(axs[1], delays_ns, freqs, 10*np.log10((np.abs(Zcorr))**2 * 10))
+fig.colorbar(im, ax=axs[1]).set_label("|S| / dBm")
+im = plt2dimg(axs[2], delays_ns, freqs, np.unwrap(np.angle(Zcorr)))
+fig.colorbar(im, ax=axs[2]).set_label("arg S")
+axs[0].legend(loc='lower right', fontsize=6)
+axs[0].set_ylabel('time / ns')
+axs[1].set_ylabel('f2')
+axs[2].set_ylabel('f2')
+axs[2].set_xlabel('delay / ns')
+readoutpower = 10*np.log10(config.short_readout_amp**2 * 10) # V to dBm
+saturationpower = 10*np.log10(config.saturation_amp**2 * 10) # V to dBm
+title = (
+    f"resonator {(config.resonatorLO+config.resonatorIF)/1e9:f}GHz"
+    f"   qubit LO {(config.qubitLO)/1e9:.3f}GHz"
+    f"   Navg {Nactual}"
+    f"\n{config.short_readout_len}ns short readout at {readoutpower:.1f}dBm{config.resonator_output_gain+config.short_readout_amp_gain:+.1f}dB"
+    f"\n{config.saturation_len}ns saturation pulse at {saturationpower:.1f}dBm{config.qubit_output_gain:+.1f}dB"
+    f"\nVgate={Vgate:.6f}V")
+fig.suptitle(title, fontsize=8)
+for ax in axs: ax.grid()
+fig.savefig(fpath+'.png')
+
+
+f2idx = np.argmin(np.abs(freqs-280e6))
+fig = plt.figure()
+for i in range(len(freqs)):
+    plt.plot(delays_ns, np.unwrap(np.angle(Zcorr))[:,i], color=plt.cm.rainbow(i/len(freqs)))
+#plt.plot(delays_ns, np.unwrap(np.angle(Zcorr))[:,f2idx])
+plt.xlabel('delay / ns')
+plt.ylabel('arg S')
+fig.suptitle(title, fontsize=8)
+plt.savefig(fpath+'_cut.png')
+
+#%%
+# Model: (sustain) step up with fall time
+
+from scipy.optimize import curve_fit
+from uncertainties import ufloat
+
+def model(delay, sustain, falltime, base, amp):
+    return base + amp * np.maximum(0, np.minimum(1, (delay-sustain)/falltime))
+
+arg = np.unwrap(np.unwrap(np.angle(Zcorr)), axis=0)
+
+popts, perrs = [], []
+for i in range(len(freqs)):
+    print(i, freqs[i])
+    base = np.mean(arg[:10,i])
+    p0 = [saturationdelay*4+config.saturation_len, config.short_readout_len, base, np.mean(arg[-10:,i])-base]
+    popt, pcov = curve_fit(
+        model, delays_ns, arg[:,i], p0=p0, bounds=(
+            [-np.inf, 0, -np.inf, 0], np.inf
+            ))
+    res = [ufloat(opt, err) for opt, err in zip(popt, np.sqrt(np.diag(pcov)))]
+    for r, name in zip(res, ["sustain", "falltime", "base", "amp"]):
+        print(f"  {name:8s} {r}")
+    popts.append(popt)
+    perrs.append(np.sqrt(np.diag(pcov)))
+
+popts = np.array(popts)
+perrs = np.array(perrs)
+meanr = [ufloat(np.mean(popts[:,i]), np.std(perrs[:,i])/perrs.shape[0]**0.5) for i in range(len(p0))]
+print("Mean")
+for i, (name, expect) in enumerate(zip(["sustain", "falltime", "base", "amp"], p0)):
+    print(f"  {name:8s} {meanr[i]} expect {expect}")
+
+fig, axs = plt.subplots(nrows=2, sharex=True)
+axs[0].plot(delays_ns, model(delays_ns, *p0), 'k--', linewidth=1)
+for i in range(len(freqs)):
+    axs[0].plot(delays_ns, arg[:,i], color=plt.cm.rainbow(i/len(freqs)))
+    axs[0].plot(delays_ns, model(delays_ns, *popts[i]), 'k-', linewidth=1)
+    axs[1].plot(delays_ns, arg[:,i]-model(delays_ns, *popts[i]), color=plt.cm.rainbow(i/len(freqs)))
+
+axs[1].set_xlabel('delay / ns')
+axs[0].set_ylabel('arg S')
+axs[1].set_ylabel('residuals')
+fig.suptitle(
+    title+
+    f"\nmean fall time: {meanr[1]} ns"
+    , fontsize=8)
+fig.tight_layout()
+plt.savefig(fpath+'_cuts_fit.png')
+
+#%%
+# Model: (lead), step down with risetime, (sustain), step up with falltime
+
+from scipy.optimize import curve_fit
+from uncertainties import ufloat
+
+def model(delay, lead, sustain, risetime, falltime, base, amp):
+    return base - amp * (
+        np.maximum(0, np.minimum(1, (delay-lead)/risetime))
+        - np.maximum(0, np.minimum(1, (delay-(lead+risetime+sustain))/falltime))
+        )
+
+arg = np.unwrap(np.unwrap(np.angle(Zcorr)), axis=0)
+
+popts, perrs = [], []
+for i in range(len(freqs)):
+    print(i, freqs[i])
+    base = np.mean(arg[:10,i])
+    shortest = min(config.short_readout_len, config.saturation_len)
+    p0 = [
+        saturationdelay*4-config.short_readout_len,
+        abs(config.short_readout_len-config.saturation_len),
+        shortest, shortest, base, base - np.min(arg[:,i])]
+    popt, pcov = curve_fit(
+        model, delays_ns, arg[:,i], p0=p0, bounds=(
+            [-np.inf, 0, 0, 0, -np.inf, 0], np.inf
+            ))
+    res = [ufloat(opt, err) for opt, err in zip(popt, np.sqrt(np.diag(pcov)))]
+    for r, name in zip(res, ["lead", "sustain", "risetime", "falltime", "base", "amp"]):
+        print(f"  {name:8s} {r}")
+    popts.append(popt)
+    perrs.append(np.sqrt(np.diag(pcov)))
+
+popts = np.array(popts)
+perrs = np.array(perrs)
+meanr = [ufloat(np.mean(popts[:,i]), np.std(perrs[:,i])/perrs.shape[0]**0.5) for i in range(len(p0))]
+print("Mean")
+for i, (name, expect) in enumerate(zip(["lead", "sustain", "risetime", "falltime", "base", "amp"], p0)):
+    print(f"  {name:8s} {meanr[i]} expect {expect}")
+
+fig, axs = plt.subplots(nrows=2, sharex=True)
+axs[0].plot(delays_ns, model(delays_ns, *p0), 'k--', linewidth=1, label='expected')
+for i in range(len(freqs)):
+    axs[0].plot(delays_ns, arg[:,i], color=plt.cm.rainbow(i/len(freqs)))
+    axs[0].plot(delays_ns, model(delays_ns, *popts[i]), 'k-', linewidth=0.8)
+    axs[1].plot(delays_ns, arg[:,i]-model(delays_ns, *popts[i]), color=plt.cm.rainbow(i/len(freqs)))
+
+
+axs[0].plot(delays_ns, np.mean(arg, axis=1), 'C3.-', linewidth=2, label='avg')
+
+axs[1].set_xlabel('delay / ns')
+axs[0].legend(loc='lower right')
+axs[0].set_ylabel('arg S')
+axs[1].set_ylabel('residuals')
+fig.suptitle(
+    title+
+    f"\nmean rise time = {meanr[2]} ns   mean fall time = {meanr[3]} ns"
+    , fontsize=8)
+fig.tight_layout()
+#plt.savefig(fpath+'_cuts_fit.png')
+
+#%%
+
+plt.figure()
+
+#%%
+
+f2idx = np.argmin(np.abs(freqs-120e6))
+plt.figure()
+for i in range(len(freqs)):
+    plt.plot(delays_ns, np.unwrap(np.angle(Zcorr))[:,i], color=plt.cm.rainbow(i/len(freqs)))
+
