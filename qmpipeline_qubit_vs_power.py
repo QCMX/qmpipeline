@@ -51,10 +51,11 @@ gate.ramp_voltage(Vgate[0], GATERAMP_STEP, GATERAMP_STEPTIME)
 print("Wait for gate to settle")
 # time.sleep(10) # Do calibration anyways
 
+# TODO make list programmatically and check against when choosing LO freq
 # # Calibrate qm, requires re-opening the QM afterwards
 # # Persistent independent of config
 # print("Calibrate mixers")
-# qmtools.QMMixerCalibration(qmm, config, qubitLOs=[2e9, 2.1e9, 2.2e9, 2.3e9, 2.4e9, 2.45e9, 2.6e9, 2.7e9, 2.8e9, 2.9e9, 3e9]).run()
+# qmtools.QMMixerCalibration(qmm, config, qubitLOs=[2e9, 2.1e9, 2.2e9, 2.3e9, 2.4e9, 2.45e9, 2.6e9, 2.7e9, 2.8e9, 2.9e9, 3e9, 3.1e9, 3.2e9, 3.3e9, 3.4e9]).run()
 
 baseconfig = qmtools.config_module_to_dict(config)
 
@@ -142,33 +143,37 @@ try:
         fqest = fq_estimate(deltafr)
         print(f"  Resonator shift: {deltafr/1e6}MHz")
         print(f"  Estimated qubit freq: {fqest/1e9}GHz")
-        if fqest < 2e9:
-            print("  Skipping due to fq estimated smaller than min LO freq.")
+        if fqest < 1.7e9:
+            print("  Skipping due to low estimated fq.")
             mpl_pause(0.1)
             continue
-        qubitLO = int(max(2e9, np.ceil((fqest-0.350e9)/1e8)*1e8))
+        # qubitLO = int(max(2e9, np.floor((fqest+0.350e9)/1e8)*1e8))
+        qubitLO = int(max(2e9, np.floor((fqest+0.10e9)/1e8)*1e8))
         if qubitLO == 2.5e9: # avoid 2*LO close to resonator
             qubitLO = 2.45e9
         print(f"  Choose qubit LO at {qubitLO/1e9}GHz")
         # localconfig['qubitIF'] = fqest - qubitLO
-        localconfig['qubitLO'] = qubitLO
-        localconfig['qmconfig']['mixers']['octave_octave1_2'][0]['lo_frequency'] = qubitLO
         # localconfig['qmconfig']['mixers']['octave_octave1_2'][0]['intermediate_frequency'] = fqest - qubitLO
-        
+        localconfig['qubitLO'] = qubitLO
+        localconfig['qmconfig']['elements']['qubit']['mixInputs']['lo_frequency'] = qubitLO
+        localconfig['qmconfig']['mixers']['octave_octave1_2'][0]['lo_frequency'] = qubitLO
+
         # Mark expected qubit freq in plot
-        axs[1,1].axvline(localconfig['qubitIF']/1e6, color='fuchsia', linewidth=0.8, zorder=100)
+        axs[1,1].axvline((fqest-qubitLO)/1e6, color='fuchsia', linewidth=0.8, zorder=100)
         # mark potential crosstalk
         def inrange(a, v):
             return v > np.min(a) and v < np.max(a)
-        if inrange(fq_range, np.abs(resonatorfit[0][0] - 2*qubitLO)):
-            axs[1,1].axvline(np.abs(resonatorfit[0][0] - 2*qubitLO)/1e6, color='gray', linewidth=0.8, zorder=99)
-        if inrange(fq_range, np.abs(resonatorfit[0][0] + 2*qubitLO)):
-            axs[1,1].axvline(np.abs(resonatorfit[0][0] + 2*qubitLO)/1e6, color='gray', linewidth=0.8, zorder=99)
+        fr = localconfig['resonatorLO'] + resonatorfit[0][0]
+        if inrange(2*(qubitLO + fq_range), fr):
+            axs[1,1].axvline((fr/2 - qubitLO)/1e6, color='gray', linewidth=0.8, zorder=99)
+        if inrange(2*(qubitLO - fq_range), fr):
+            axs[1,1].axvline(-(fr/2 - qubitLO)/1e6, color='gray', linewidth=0.8, zorder=99)
 
         # qubit vs power
         assert np.max(fq_amps) <= 0.3161 # max 0dBm
-        localconfig['qubit_output_gain'] = 10
-        prog = progs[2] = qmtools.QMQubitSpec_P2(qmm, localconfig, Navg=500, qubitIFs=fq_range, drive_amps=fq_amps)
+        localconfig['qubit_output_gain'] = 5
+        prog = progs[2] = qmtools.QMQubitSpec_P2(
+            qmm, localconfig, Navg=2000, qubitIFs=fq_range, drive_amps=fq_amps)
         qubitspecvspower = prog.run(plot=axs[1,1])
         results['qubit_P2'][i] = qubitspecvspower
 

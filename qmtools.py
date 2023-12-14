@@ -264,8 +264,19 @@ class QMProgram (object):
 
 
 class QMMixerCalibration (QMProgram):
-    """By default the calibration database should be active in the
-    QuantumMachineManager so the latest calibration is automatically applied."""
+    """
+    Runs calibration at LO and IF given in the config.
+    For the qubit runs calibration at additional LO frequencies
+    supplied as parameter (with the IF from the config).
+
+    By default the calibration database should be active in the
+    QuantumMachineManager so the latest calibration is automatically applied.
+
+    In the QM config, the LO and IF for the element and in the mixer definition have to match,
+    otherwise an error is produced when opening the quantum machine.
+    The QM selects the calibration matching the LO and IF given in the config
+    upon opening the quantum machine.
+    """
 
     def __init__(self, qmm, config, qubitLOs=None):
         super().__init__(qmm, config)
@@ -283,31 +294,17 @@ class QMMixerCalibration (QMProgram):
         qm = self.qmm.open_qm(self.config['qmconfig'])
         self._init_octave(qm)
         print("Running calibration on resonator channel...")
-        rcal = qm.octave.calibrate_element('resonator', [
-            (self.config['resonatorLO'], 10e6),
-            (self.config['resonatorLO'], 50e6),
-            (self.config['resonatorLO'], 100e6),
-            (self.config['resonatorLO'], 150e6),
-            (self.config['resonatorLO'], 200e6),
-            (self.config['resonatorLO'], 250e6),
-            (self.config['resonatorLO'], 300e6),
-            (self.config['resonatorLO'], 350e6),
-            (self.config['resonatorLO'], 400e6)])
-        qubitLOs = self.params['qubitLOs']
+        rcal = qm.octave.calibrate_element(
+            'resonator', [(self.config['resonatorLO'], self.config['resonatorIF'])])
+        qubitLOs = list(self.params['qubitLOs'])
+        if self.config['qubitLO'] not in qubitLOs:
+            qubitLOs.append(self.config['qubitLO'])
         print(f"Running calibration on qubit channel for {len(self.params['qubitLOs'])} LO frequencies...")
         qcal = []
         for lof in qubitLOs:
             qm.octave.set_lo_frequency('qubit', lof)
-            qcal.append(qm.octave.calibrate_element('qubit', [
-                (lof, 10e6),
-                (lof, 50e6),
-                (lof, 100e6),
-                (lof, 150e6),
-                (lof, 200e6),
-                (lof, 250e6),
-                (lof, 300e6),
-                (lof, 350e6),
-                (lof, 400e6)]))
+            qcal.append(qm.octave.calibrate_element(
+                'qubit', [(lof, self.config['qubitIF'])]))
         return {'resonator': rcal, 'qubit': qcal} | self.params | {'config': self.config}
 
 

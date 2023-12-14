@@ -1,4 +1,15 @@
 
+# Note:
+# Used calibration values are the chosen from the database when opening the QM
+# based upon the element's/mixer's LO and IF.
+# The element and mixer LO and IF have to match, otherwise an error is produced.
+
+# While the minimum LO is 2GHz, the calibration works reliable for negative IF
+# with total frequency below 2GHz.
+
+# The calibration is as similar for positive/negative IF as for
+# very different positive IF.
+
 import importlib
 import qm.qua as qua
 import qm.octave as octave
@@ -9,6 +20,7 @@ import qminit
 
 #qmm = qminit.connect(use_calibration=False)
 qmm = qminit.connect()
+from qualang_tools.loops import from_array
 
 #%%
 # Simply output constant pulse
@@ -93,17 +105,7 @@ qm = qmm.open_qm(config.qmconfig)
 qminit.octave_setup_qubit(qm, config)
 
 print("Running calibration on qubit channel...")
-cal = qm.octave.calibrate_element('qubit', [
-    (config.qubitLO, 10e6),
-    (config.qubitLO, 50e6),
-    (config.qubitLO, 100e6),
-    (config.qubitLO, 150e6),
-    (config.qubitLO, 200e6),
-    (config.qubitLO, 250e6),
-    (config.qubitLO, 300e6),
-    (config.qubitLO, 350e6),
-    (config.qubitLO, config.qubitIF)
-    ])
+cal = qm.octave.calibrate_element('qubit', [(config.qubitLO, config.qubitIF)])
 
 # Need to reopen qm to apply calibration settings
 print("Playing constant pulse on qubit channel...")
@@ -116,6 +118,21 @@ job = qm.execute(mixer_cal_qubit)
 job.halt()
 qm.octave.set_rf_output_mode('resonator', octave.RFOutputMode.off)
 qm.octave.set_rf_output_mode('qubit', octave.RFOutputMode.off)
+
+#%%
+import numpy as np
+
+fs = np.arange(-450e6, +450e6, 1e6)
+with qua.program() as ifview_qubit:
+    n = qua.declare(int)
+    f = qua.declare(int)
+    with qua.infinite_loop_():
+        with qua.for_(*from_array(f, fs)):
+            qua.update_frequency('qubit', f)
+            with qua.for_(n, 0, n < 1000, n + 1):
+                qua.play('const', 'qubit')
+
+job = qm.execute(ifview_qubit)
 
 #%%
 
