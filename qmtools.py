@@ -65,6 +65,7 @@ import warnings
 from copy import deepcopy
 from uncertainties import ufloat
 from scipy.optimize import curve_fit
+from scipy.signal import savgol_filter
 
 import numpy as np
 import matplotlib as mpl
@@ -72,7 +73,9 @@ import matplotlib.pyplot as plt
 
 import qm.qua as qua
 import qm.octave as octave
+from qm import SimulationConfig
 from qualang_tools.loops import from_array
+from qualang_tools.bakery import baking
 
 import qminit
 from helpers import mpl_pause
@@ -93,7 +96,10 @@ def opx_pow2amp(pow, ext_gain_db=0):
     return np.sqrt(10**((pow-ext_gain_db)/10) / 10)
 
 
-class ResultUnavailableError (Exception):
+class PipelineException (Exception):
+    pass
+
+class ResultUnavailableError (PipelineException):
     pass
 
 
@@ -145,6 +151,11 @@ class QMProgram (object):
         'pause' is the sleep time (in seconds) between checking the
         program results and updating the live plot.
         """
+        # Note: if baking, _make_program may change qmconfig
+        # So need to do this before opening QM
+        if not hasattr(self, 'qmprog'):
+            self._make_program()
+
         # TODO: reuse open quantum machine if config is the same?
         qm = self.qm = self.qmm.open_qm(self.config['qmconfig'])
         self._init_octave(qm)
@@ -153,8 +164,6 @@ class QMProgram (object):
         # pendingjob = qm.queue.add_compiled(progid)
         # job = pendingjob.wait_for_execution()
 
-        if not hasattr(self, 'qmprog'):
-            self._make_program()
         job = self.last_job = qm.execute(self.qmprog)
         resulthandles = job.result_handles
         tstart = time.time()
@@ -259,6 +268,11 @@ class QMProgram (object):
         pass
     
     def clear_liveplot(self):
+        if hasattr(self, 'colorbar'):
+            try:
+                self.colorbar.remove()
+            except:
+                pass
         if hasattr(self, 'ax'):
             self.ax.clear()
 
@@ -342,7 +356,7 @@ class QMTimeOfFlight (QMProgram):
                 adc_st.input2().save('adc2_single_run')
         self.qmprog = prog
         return prog
-    
+
     def apply_offset_to(self, config, printinfo=True):
         tof = self._retrieve_results()
         nsamples = tof['adc1'].size
@@ -426,8 +440,7 @@ class QMResonatorSpec (QMProgram):
             "resonator spectroscopy analysis\n"
             f"LO {(self.config['resonatorLO'])/1e9:f}GHz"
             f"   Navg {self.params['Navg']}\n"
-            f"{self.config['readout_len']}ns readout at {readoutpower:.1f}dBm{self.config['resonator_output_gain']:+.1f}dB"
-            f",   {self.config['resonator_input_gain']:+.1f}dB input gain",
+            f"{self.config['readout_len']/1e3:.0f}us readout at {readoutpower:.1f}dBm{self.config['resonator_output_gain']:+.1f}dB",
             fontsize=8)
         ax.set_xlabel('IF  [MHz]')
         ax.set_ylabel('|S|  [Volt]')
@@ -454,6 +467,9 @@ class QMResonatorSpec (QMProgram):
         """Fit 'square root' lorentzian shape to data.
 
         results is the return value of run() or None to use the results of the last run().
+
+        Returns tuple of (optimal, uncertainty), each being an array of
+        f0, width, amplitude and angle offset.
         """
         res = self._retrieve_results() if result is None else result
         freqs = res['resonatorIFs']
@@ -559,12 +575,11 @@ class QMResonatorSpec_P2 (QMProgram):
             "resonator spectroscopy vs readout power\n"
             f"LO {(self.config['resonatorLO'])/1e9:f}GHz"
             f"   Navg {self.params['Navg']}\n"
-            f"{self.config['readout_len']}ns readout,"
-            f"  {self.config['resonator_output_gain']:+.1f}dB output gain,"
-            f"  {self.config['resonator_input_gain']:+.1f}dB input gain",
+            f"{self.config['readout_len']/1e3:.0f}us readout,"
+            f"  {self.config['resonator_output_gain']:+.1f}dB output gain",
             fontsize=8)
         ax.set_xlabel("readout IF / MHz")
-        ax.set_ylabel("Octave readout power / dBm")
+        ax.set_ylabel("readout power / dBm")
         # ax.get_figure().colorbar(self.img, ax=ax).set_label('amplitude / V')
 
         axright = ax.secondary_yaxis(
@@ -587,8 +602,6 @@ class QMResonatorSpec_P2 (QMProgram):
     def clear_liveplot(self):
         if hasattr(self, 'ax'):
             self.ax.clear()
-        # if hasattr(self, 'axright'):
-        #     self.axright.remove()
 
 
 class QMQubitSpec (QMProgram):
@@ -669,7 +682,10 @@ class QMQubitSpec_P2 (QMProgram):
         driveamps in Volts (saturation_amp is ignored)
         """
         super().__init__(qmm, config)
-        self.params = {'Navg': Navg, 'qubitIFs': qubitIFs, 'drive_amps': drive_amps}
+        self.params = {
+            'Navg': Navg,
+            'qubitIFs': qubitIFs,
+            'drive_amps': drive_amps}
 
     def _make_program(self):
         read_amp_scale = self.config['readout_amp'] / \
@@ -678,6 +694,7 @@ class QMQubitSpec_P2 (QMProgram):
         assert self.config['readout_len'] == self.config['qmconfig']['pulses']['readout_pulse']['length']
         freqs = self.params['qubitIFs']
 
+        self.params['drive_power'] = opx_amp2pow(self.params['drive_amps'], self.config['qubit_output_gain'])
         amps = self.params['drive_amps'] / \
             self.config['qmconfig']['waveforms']['saturation_wf']['sample']
         assert np.all(np.abs(self.params['drive_amps']) <=
@@ -737,37 +754,559 @@ class QMQubitSpec_P2 (QMProgram):
         xx, yy = np.meshgrid(freqs/1e6, drivepower, indexing='ij')
         self.img = ax.pcolormesh(xx, yy, np.full(
             (len(freqs), len(amps)), np.nan), shading='nearest')
-        # TODO colorbar (use ax.get_figure())
-        ax.set_title("qubit spectroscopy analysis")
+        self.colorbar = ax.get_figure().colorbar(self.img, ax=ax, orientation='horizontal')
+        self.colorbar.set_label('arg S')
+
         ax.set_xlabel(
             f"drive IF / MHz + LO {self.config['qubitLO']/1e9:f} / GHz")
-        ax.set_ylabel("Octave drive power / dBm", fontsize=8)
+        ax.set_ylabel("drive power / dBm")
         axright = ax.secondary_yaxis(
             'right', functions=(
                 lambda p: opx_pow2amp(p, self.config['qubit_output_gain']),
                 lambda a: opx_amp2pow(a, self.config['qubit_output_gain'])))
         axright.set_ylabel('drive amplitude / V')
 
+        readoutpower = opx_amp2pow(self.config['readout_amp'])
+        ax.set_title(
+            "qubit vs f2, P2\n"
+            f"resonator {self.config['resonatorLO']/1e9:.3f}GHz{self.config['resonatorIF']/1e6:+.3f}MHz\n"
+            f"qubit LO {self.config['qubitLO']/1e9:.3f}GHz"
+            f"   Navg {self.params['Navg']}\n"
+            f"{self.config['readout_len']/1e3:.0f}us readout at {readoutpower:.1f}dBm{self.config['resonator_output_gain']:+.1f}dB\n"
+            f"{self.config['saturation_len']/1e3:.0f}us drive,  {self.config['qubit_output_gain']:+.1f}dB output gain",
+            fontsize=8)
         self.ax = ax
-        self.axright = axright
 
     def _update_liveplot(self, ax, resulthandles):
         res = self._retrieve_results(resulthandles)
         if res['Z'] is None:
             return
         # Note: setting an empty Normalize resets the colorscale
-        self.img.set(array=np.angle(res['Z']), norm=mpl.colors.Normalize())
+        Z = np.unwrap(np.unwrap(np.angle(res['Z']), axis=0))
+        self.img.set(array=Z)
+        self.img.autoscale()
         # ax.relim(), ax.autoscale(), ax.autoscale_view()
         
-    def clear_liveplot(self):
-        if hasattr(self, 'ax'):
-            self.ax.clear()
-        # if hasattr(self, 'axright'):
-        #     self.axright.remove()
+    def find_dip(self, good_power_estimate_dBm, window_length=5,
+                 apply_to_config=None, ax=None, printinfo=True):
+        """Tries to estimate qubit frequency by finding the minimum in the arg(Z) response.
+
+        Raises PipelineException if no reliable dip is found.
+
+        Sets qubit IF in config supplied to 'apply_to_config'.
+        Returns dip IF frequency.
+        """
+        qubitIFs = self.params['qubitIFs']
+        power = self.params['drive_power']
+        res = self._retrieve_results()
+        argZ = np.angle(res['Z'])
+
+        if good_power_estimate_dBm < min(power) or good_power_estimate_dBm > max(power):
+            warnings.warn(f"Good power estimate {good_power_estimate_dBm:+.1f}dBm is outside range of measured powers. Clipping to range.")
+        ampi = np.argmin(np.abs(power - good_power_estimate_dBm))
+        if window_length < 3:
+            warnings.warn(f"Smoothing window {window_length} smaller 3. Skip smoothing.")
+            filt = argZ[:,ampi]
+        else:
+            filt = savgol_filter(argZ[:,ampi], window_length, polyorder=2)
+        qi = np.argmin(filt)
+        signal = np.abs(filt[qi] - np.mean(filt))
+        noise = np.std(np.diff(argZ[:,ampi]))/2**0.5
+        if printinfo:
+            print("Fine tune qubit IF")
+            print(f"    {signal} signal vs {noise} noise level")
+            print(f"    best IF: {qubitIFs[qi]/1e6}MHz")
+        if signal < 3*noise:
+            raise PipelineException(f"Signal {signal} to noise {noise} not larger 3.")
+        if qi <= 1 or qi >= len(qubitIFs)-2:
+            raise PipelineException(f"Minimum on the boundary of IF range {qi} in [0,{len(qubitIFs)-1}].")
+
+        fq = qubitIFs[qi]
+        if ax is not None:
+            ax.plot([fq/1e6], [power[ampi]], '.', color='r')
+        if apply_to_config is not None:
+            apply_to_config['qubitIF'] = fq
+        return fq
 
 
-# class QMTimeRabi (QMProgram):
-#     pass
+class QMReadoutSNR (QMProgram):
+    """Uses short readout pulse and saturation pulse."""
+
+    def __init__(self, qmm, config, Navg, resonatorIFs, readout_amps, drive_len):
+        pass
+        super().__init__(qmm, config)
+        self.params = {
+            'Navg': Navg,
+            'resonatorIFs': resonatorIFs,
+            'readout_amps': readout_amps,
+            'drive_len': drive_len}
+
+    def _make_program(self):
+        drive_amp_scale = self.config['saturation_amp'] / \
+            self.config['qmconfig']['waveforms']['saturation_wf']['sample']
+        freqs = self.params['resonatorIFs']
+
+        assert np.all(np.abs(self.params['readout_amps']) <= 0.5), "Output amplitudes need to be in range -0.5 to 0.5V."
+        amps = self.params['readout_amps'] / \
+            self.config['qmconfig']['waveforms']['short_readout_wf']['sample']
+        if np.any(amps < -2) or np.any(amps >= 2):
+            raise ValueError(
+                "Readout amplitudes cannot be scaled to target voltage because ratio is out of scaling range [-2 to 2].")
+
+        assert self.params['drive_len'] % 4 == 0
+        drive_len_cycles = self.params['drive_len'] // 4
+        readoutwait_cycles = drive_len_cycles - self.config['short_readout_len']//4
+        assert readoutwait_cycles >= 4
+
+        with qua.program() as prog:
+            n = qua.declare(int)
+            f = qua.declare(int)
+            a = qua.declare(qua.fixed)
+            I = qua.declare(qua.fixed)
+            Q = qua.declare(qua.fixed)
+            I_st = qua.declare_stream()
+            Q_st = qua.declare_stream()
+            n_st = qua.declare_stream()
+            rand = qua.lib.Random()
+
+            qua.update_frequency('qubit', self.config['qubitIF'])
+            with qua.for_(n, 0, n < self.params['Navg'], n + 1):
+                with qua.for_(*from_array(f, freqs)):
+                    qua.update_frequency('resonator', f)
+                    with qua.for_(*from_array(a, amps)):
+                        # drive OFF
+                        qua.measure(
+                            'short_readout'*qua.amp(a), 'resonator', None,
+                            qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
+                            qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
+                        qua.save(I, I_st)
+                        qua.save(Q, Q_st)
+                        qua.wait(self.config['cooldown_clk'], 'resonator')
+                        qua.wait(rand.rand_int(50)+4, 'resonator') # randomize demod error
+
+                        # drive ON
+                        qua.align()
+                        qua.play('saturation'*qua.amp(drive_amp_scale), 'qubit')
+                        qua.wait(readoutwait_cycles, 'resonator')
+                        # qua.align()
+                        qua.measure(
+                            'short_readout'*qua.amp(a), 'resonator', None,
+                            qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
+                            qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
+                        qua.save(I, I_st)
+                        qua.save(Q, Q_st)
+                        qua.wait(self.config['cooldown_clk'], 'resonator')
+                        qua.wait(rand.rand_int(50)+4, 'resonator') # randomize demod error
+                qua.save(n, n_st)
+
+            with qua.stream_processing():
+                n_st.save('iteration')
+                I_st.buffer(len(freqs), len(amps), 2).average().save('I')
+                Q_st.buffer(len(freqs), len(amps), 2).average().save('Q')
+
+        self.qmprog = prog
+        return prog
+
+    def _initialize_liveplot(self, ax):
+        freqs = self.params['resonatorIFs']  # Hz
+        amps = self.params['readout_amps']  # V
+        power = opx_amp2pow(amps, self.config['resonator_output_gain'])
+
+        xx, yy = np.meshgrid(freqs/1e6, power, indexing='ij')
+        self.img = ax.pcolormesh(xx, yy, np.full(
+            (len(freqs), len(amps)), np.nan), shading='nearest')
+        ax.set_xlabel("resonator IF / MHz")
+        ax.set_ylabel("readout power / dBm")
+        axright = ax.secondary_yaxis(
+            'right', functions=(
+                lambda p: opx_pow2amp(p, self.config['resonator_output_gain']),
+                lambda a: opx_amp2pow(a, self.config['resonator_output_gain'])))
+        axright.set_ylabel('readout amplitude / V')
+
+        drivepower = opx_amp2pow(self.config['saturation_amp'])
+        ax.set_title(
+            f"readout SNR,  Navg {self.params['Navg']}\n"
+            f"resonator {self.config['resonatorLO']/1e9:.3f}GHz{self.config['resonatorIF']/1e6:+.3f}MHz\n"
+            f"qubit {self.config['qubitLO']/1e9:.3f}GHz{self.config['qubitIF']/1e6:+.3f}MHz\n"
+            f"{self.config['short_readout_len']:.0f}ns readout,  {self.config['resonator_output_gain']:+.1f}dB output gain\n"
+            f"{self.params['drive_len']:.0f}ns drive,  {drivepower:.1f}dBm{self.config['qubit_output_gain']:+.1f}dB",
+            fontsize=8)
+        self.ax = ax
+
+    def _update_liveplot(self, ax, resulthandles):
+        res = self._retrieve_results(resulthandles)
+        if res['Z'] is None:
+            return
+        dist = np.abs(res['Z'][...,1] - res['Z'][...,0])# / self.params['readout_amps'][None,:]
+        self.img.set_array(dist)
+        self.img.autoscale()
+
+
+class QMTimeRabi (QMProgram):
+    """Uses short readout pulse and saturation pulse."""
+
+    def __init__(self, qmm, config, Navg, max_duration_ns, drive_read_overlap_cycles=0):
+        super().__init__(qmm, config)
+        self.params = {
+            'Navg': Navg,
+            'max_duration_ns': max_duration_ns,
+            'drive_read_overlap_cycles': drive_read_overlap_cycles}
+
+    def _make_program(self):
+        read_amp_scale = self.config['short_readout_amp'] / \
+            self.config['qmconfig']['waveforms']['short_readout_wf']['sample']
+        drive_amp_scale = self.config['saturation_amp'] / \
+            self.config['qmconfig']['waveforms']['saturation_wf']['sample']
+
+        overlap_clk = self.params['drive_read_overlap_cycles']
+        assert type(overlap_clk) is int and overlap_clk >= 0
+
+        # minimum duration: 4cycles = 16ns
+        maxduration = self.params['max_duration_ns']
+        if maxduration < 16 or maxduration % 4 != 0:
+            raise ValueError("Max duration of rabi pulse needs to be at least 16ns and a multiple of 4.")
+        maxduration_clk = maxduration // 4
+        duration_clk = np.arange(4, maxduration_clk, 1)
+        self.params['duration_ns'] = np.arange(0, maxduration_clk*4, 1)
+
+        # Waveforms are padded to a multiple of 4 samples and a minimum length of 16 samples
+        # (with padding added as zeros at the beginning).
+        # Remember: baking modifies the qmconfig but this class instance uses its own deep-copy.
+        with baking(self.config['qmconfig'], padding_method='left') as bake0:
+            bake0.add_op('drive_0', 'qubit', [[0], [0]])
+            bake0.play('drive_0', 'qubit')
+        baked_saturation = [bake0]
+        for l in range(1, 16):
+            with baking(self.config['qmconfig'], padding_method='left') as bake:
+                bake.add_op('drive_%d'%l, 'qubit', [[self.config['saturation_amp']]*l, [0]*l])
+                bake.play('drive_%d'%l, 'qubit')
+            baked_saturation.append(bake)
+
+        with qua.program() as prog:
+            n = qua.declare(int)
+            t = qua.declare(int)
+            I = qua.declare(qua.fixed)
+            Q = qua.declare(qua.fixed)
+            n_st = qua.declare_stream()
+            I_st = qua.declare_stream()
+            Q_st = qua.declare_stream()
+            rand = qua.lib.Random()
+
+            qua.update_frequency('resonator', self.config['resonatorIF'])
+            qua.update_frequency('qubit', self.config['qubitIF'])
+            with qua.for_(n, 0, n < self.params['Navg'], n + 1):
+                qua.save(n, n_st)
+                for l in range(16):
+                    qua.align()
+                    qua.wait(12+overlap_clk, 'qubit')
+                    baked_saturation[l].run()
+                    qua.wait(16, 'resonator')
+                    qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator', None,
+                        qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
+                        qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
+                    qua.save(I, I_st)
+                    qua.save(Q, Q_st)
+                    qua.wait(self.config['cooldown_clk'], 'resonator')
+                    qua.wait(rand.rand_int(50)+4, 'resonator') # randomize demod error
+
+                with qua.for_(*from_array(t, duration_clk)):
+                    for i in range(4):
+                        qua.align()
+                        qua.wait(12+overlap_clk, 'qubit')
+                        baked_saturation[i].run()
+                        qua.play('saturation'*qua.amp(drive_amp_scale), 'qubit', duration=t)
+                        qua.wait(16, 'resonator')
+                        qua.wait(t, 'resonator')
+                        qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator', None,
+                            qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
+                            qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
+                        qua.save(I, I_st)
+                        qua.save(Q, Q_st)
+                        qua.wait(self.config['cooldown_clk'], 'resonator')
+                        qua.wait(rand.rand_int(50)+4, 'resonator')
+
+            with qua.stream_processing():
+                n_st.save('iteration')
+                I_st.buffer(len(duration_clk)*4+16).average().save('I')
+                Q_st.buffer(len(duration_clk)*4+16).average().save('Q')
+
+        self.qmprog = prog
+        return prog
+
+    def check_timing(self, duration_cycles=25000, plot=True):
+        """Simulate program and check alignment of drive and readout alignment.
+        Raises PipelineException if the alignment is not constant for all pulses.
+        Returns the alignment timing in ns.
+        """
+        if not hasattr(self, 'qmprog'):
+            self._make_program()
+        simulate_config = SimulationConfig(duration=duration_cycles)
+        job = self.qmm.simulate(self.config['qmconfig'], self.qmprog, simulate_config)
+
+        if plot:
+            plt.figure()
+            job.get_simulated_samples().con1.plot()
+
+        analog = job.get_simulated_samples().con1.analog
+        drive = (analog['3'] - analog['3'][0]) + 1j * (analog['4'] - analog['4'][0])
+        read = (analog['7'] - analog['7'][0]) + 1j * (analog['8'] - analog['8'][0])
+        # end of drive pulses
+        drivestop = np.nonzero(drive)[0][:-1][np.diff(np.nonzero(drive)[0]) > 1]
+        # start of readout pulses
+        readstart = np.nonzero(read)[0][1:][np.diff(np.nonzero(read)[0]) > 1]
+        if plot:
+            plt.scatter(drivestop, [0]*drivestop.size)
+            plt.scatter(readstart, [0]*readstart.size, color='C2')
+
+        l = min(readstart.size, drivestop.size)
+        overlap = drivestop[:l] - readstart[:l]
+        print("Waveform overlap:", overlap, "ns")
+        if not np.all(overlap == overlap[0]):
+            raise PipelineException("Drive/readout waveform alignment not constant.")
+        return overlap
+
+    def _initialize_liveplot(self, ax):
+        durations = self.params['duration_ns']
+        self.line, = ax.plot(durations, np.full(len(durations), np.nan))
+        ax.set_xlabel("drive duration / ns")
+        ax.set_ylabel("arg S")
+        readoutpower = opx_amp2pow(self.config['readout_amp'])
+        drivepower = opx_amp2pow(self.config['saturation_amp'])
+        ax.set_title(
+            f"Time Rabi,   Navg {self.params['Navg']:.2e}\n"
+            f"resonator {self.config['resonatorLO']/1e9:.3f}GHz{self.config['resonatorIF']/1e6:+.3f}MHz\n"
+            f"qubit {self.config['qubitLO']/1e9:.3f}GHz{self.config['qubitIF']/1e6:+.0f}MHz\n"
+            f"{self.config['short_readout_len']:.0f}ns readout at {readoutpower:.1f}dBm{self.config['resonator_output_gain']:+.1f}dB\n"
+            f"drive at {drivepower:.1f}dBm{self.config['qubit_output_gain']:+.1f}dB,"
+            f"  {self.params['drive_read_overlap_cycles']//4}ns overlap",
+            fontsize=8)
+        self.ax = ax
+
+    def _update_liveplot(self, ax, resulthandles):
+        res = self._retrieve_results(resulthandles)
+        if res['Z'] is None:
+            return
+        self.line.set_ydata(np.unwrap(np.angle(res['Z'])))
+        ax.relim(), ax.autoscale(), ax.autoscale_view()
+
+
+class QMTimeRabiChevrons (QMTimeRabi):
+    """Uses short readout pulse and saturation pulse.
+    Inherits from QMTimeRabi for check_timing()
+    """
+
+    def __init__(self, qmm, config, Navg, qubitIFs, max_duration_ns, drive_read_overlap_cycles=0):
+        super().__init__(qmm, config, None, None)
+        self.params = {
+            'Navg': Navg,
+            'qubitIFs': qubitIFs,
+            'max_duration_ns': max_duration_ns,
+            'drive_read_overlap_cycles': drive_read_overlap_cycles}
+
+    def _make_program(self):
+        read_amp_scale = self.config['short_readout_amp'] / \
+            self.config['qmconfig']['waveforms']['short_readout_wf']['sample']
+        drive_amp_scale = self.config['saturation_amp'] / \
+            self.config['qmconfig']['waveforms']['saturation_wf']['sample']
+
+        qubitIFs = self.params['qubitIFs']
+        overlap_clk = self.params['drive_read_overlap_cycles']
+        assert type(overlap_clk) is int and overlap_clk >= 0
+
+        # minimum duration: 4cycles = 16ns
+        maxduration = self.params['max_duration_ns']
+        if maxduration < 16 or maxduration % 4 != 0:
+            raise ValueError("Max duration of rabi pulse needs to be at least 16ns and a multiple of 4.")
+        maxduration_clk = maxduration // 4
+        duration_clk = np.arange(4, maxduration_clk, 1)
+        self.params['duration_ns'] = np.arange(0, maxduration_clk*4, 1)
+
+        # Waveforms are padded to a multiple of 4 samples and a minimum length of 16 samples
+        # (with padding added as zeros at the beginning).
+        # Remember: baking modifies the qmconfig but this class instance uses its own deep-copy.
+        with baking(self.config['qmconfig'], padding_method='left') as bake0:
+            bake0.add_op('drive_0', 'qubit', [[0], [0]])
+            bake0.play('drive_0', 'qubit')
+        baked_saturation = [bake0]
+        for l in range(1, 16):
+            with baking(self.config['qmconfig'], padding_method='left') as bake:
+                bake.add_op('drive_%d'%l, 'qubit', [[self.config['saturation_amp']]*l, [0]*l])
+                bake.play('drive_%d'%l, 'qubit')
+            baked_saturation.append(bake)
+
+        with qua.program() as prog:
+            n = qua.declare(int)
+            f = qua.declare(int)
+            t = qua.declare(int)
+            I = qua.declare(qua.fixed)
+            Q = qua.declare(qua.fixed)
+            n_st = qua.declare_stream()
+            I_st = qua.declare_stream()
+            Q_st = qua.declare_stream()
+            rand = qua.lib.Random()
+
+            qua.update_frequency('resonator', self.config['resonatorIF'])
+            with qua.for_(n, 0, n < self.params['Navg'], n + 1):
+                qua.save(n, n_st)
+                with qua.for_(*from_array(f, qubitIFs)):
+                    qua.update_frequency('qubit', f)
+                    for l in range(16):
+                        qua.align()
+                        qua.wait(12+overlap_clk, 'qubit')
+                        baked_saturation[l].run()
+                        qua.wait(16, 'resonator')
+                        qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator', None,
+                            qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
+                            qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
+                        qua.save(I, I_st)
+                        qua.save(Q, Q_st)
+                        qua.wait(self.config['cooldown_clk'], 'resonator')
+                        qua.wait(rand.rand_int(50)+4, 'resonator') # randomize demod error
+
+                    with qua.for_(*from_array(t, duration_clk)):
+                        for i in range(4):
+                            qua.align()
+                            qua.wait(12+overlap_clk, 'qubit')
+                            baked_saturation[i].run()
+                            qua.play('saturation'*qua.amp(drive_amp_scale), 'qubit', duration=t)
+                            qua.wait(16, 'resonator')
+                            qua.wait(t, 'resonator')
+                            qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator', None,
+                                qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
+                                qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
+                            qua.save(I, I_st)
+                            qua.save(Q, Q_st)
+                            qua.wait(self.config['cooldown_clk'], 'resonator')
+                            qua.wait(rand.rand_int(50)+4, 'resonator')
+
+            with qua.stream_processing():
+                n_st.save('iteration')
+                I_st.buffer(len(qubitIFs), len(duration_clk)*4+16).average().save('I')
+                Q_st.buffer(len(qubitIFs), len(duration_clk)*4+16).average().save('Q')
+
+        self.qmprog = prog
+        return prog
+
+    def _figtitle(self, Navg):
+        readoutpower = opx_amp2pow(self.config['readout_amp'])
+        drivepower = opx_amp2pow(self.config['saturation_amp'])
+        return (
+            f"Rabi Chevrons,   Navg {Navg:.2e}\n"
+            f"resonator {self.config['resonatorLO']/1e9:.3f}GHz{self.config['resonatorIF']/1e6:+.3f}MHz\n"
+            f"qubit LO {self.config['qubitLO']/1e9:.3f}GHz\n"
+            f"{self.config['short_readout_len']:.0f}ns readout at {readoutpower:.1f}dBm{self.config['resonator_output_gain']:+.1f}dB\n"
+            f"drive at {drivepower:.1f}dBm{self.config['qubit_output_gain']:+.1f}dB,"
+            f"  {self.params['drive_read_overlap_cycles']//4}ns overlap")
+
+    def _initialize_liveplot(self, ax):
+        durations = self.params['duration_ns']
+        freqs = self.params['qubitIFs']
+
+        xx, yy = np.meshgrid(durations, freqs/1e6, indexing='ij')
+        self.img = ax.pcolormesh(xx, yy, np.full(
+            (len(durations), len(freqs)), np.nan), shading='nearest')
+        self.colorbar = ax.get_figure().colorbar(self.img, ax=ax, orientation='horizontal')
+        self.colorbar.set_label("arg S")
+        ax.set_ylabel("drive IF / MHz")
+        ax.set_xlabel("drive duration / ns")
+        ax.set_title(self._figtitle(self.params['Navg']), fontsize=8)
+        self.ax = ax
+
+    def _update_liveplot(self, ax, resulthandles):
+        res = self._retrieve_results(resulthandles)
+        if res['Z'] is None:
+            return
+        self.img.set_array(np.unwrap(np.unwrap(np.angle(res['Z'])), axis=0).T)
+        self.img.autoscale()
+        self.ax.set_title(self._figtitle(res['iteration']+1), fontsize=8)
+
+
+class QMPowerRabi (QMProgram):
+    """Uses short readout pulse and saturation pulse."""
+
+    def __init__(self, qmm, config, Navg, duration_ns, drive_amps, drive_read_overlap_cycles=0):
+        super().__init__(qmm, config)
+        self.params = {
+            'Navg': Navg,
+            'duration_ns': duration_ns,
+            'drive_amps': drive_amps,
+            'drive_read_overlap_cycles': drive_read_overlap_cycles}
+
+    def _make_program(self):
+        read_amp_scale = self.config['short_readout_amp'] / \
+            self.config['qmconfig']['waveforms']['short_readout_wf']['sample']
+        drive_amp_scale = self.params['drive_amps'] / 0.316
+        self.params['drive_power'] = opx_amp2pow(self.params['drive_amps'], self.config['qubit_output_gain'])
+
+        overlap_clk = self.params['drive_read_overlap_cycles']
+        assert type(overlap_clk) is int and overlap_clk >= 0
+
+        duration = self.params['duration_ns']
+
+        # Waveforms are padded to a multiple of 4 samples and a minimum length of 16 samples
+        # (with padding added as zeros at the beginning).
+        # Remember: baking modifies the qmconfig but this class instance uses its own deep-copy.
+        with baking(self.config['qmconfig'], padding_method='left') as bakedrive:
+            bakedrive.add_op('drive_0', 'qubit', [[0.316]*duration, [0]*duration])
+            bakedrive.play('drive_0', 'qubit')
+        drivepulselen_cycles = int(np.ceil(duration/4))
+
+        with qua.program() as prog:
+            n = qua.declare(int)
+            a = qua.declare(qua.fixed)
+            I = qua.declare(qua.fixed)
+            Q = qua.declare(qua.fixed)
+            n_st = qua.declare_stream()
+            I_st = qua.declare_stream()
+            Q_st = qua.declare_stream()
+            rand = qua.lib.Random()
+
+            qua.update_frequency('resonator', self.config['resonatorIF'])
+            qua.update_frequency('qubit', self.config['qubitIF'])
+            with qua.for_(n, 0, n < self.params['Navg'], n + 1):
+                qua.save(n, n_st)
+                with qua.for_(*from_array(a, drive_amp_scale)):
+                    qua.wait(12+overlap_clk, 'qubit')
+                    bakedrive.run(amp_array=[('qubit', a)])
+                    qua.wait(12+drivepulselen_cycles, 'resonator')
+                    qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator', None,
+                        qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
+                        qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
+                    qua.save(I, I_st)
+                    qua.save(Q, Q_st)
+                    qua.wait(self.config['cooldown_clk'], 'resonator')
+                    qua.wait(rand.rand_int(50)+4, 'resonator')
+
+            with qua.stream_processing():
+                n_st.save('iteration')
+                I_st.buffer(len(drive_amp_scale)).average().save('I')
+                Q_st.buffer(len(drive_amp_scale)).average().save('Q')
+
+        self.qmprog = prog
+        return prog
+
+    def _initialize_liveplot(self, ax):
+        amps = self.params['drive_amps']
+        self.line, = ax.plot(amps, np.full(len(amps), np.nan))
+        ax.set_xlabel("drive amplitude / V")
+        ax.set_ylabel("arg S")
+        readoutpower = opx_amp2pow(self.config['readout_amp'])
+        ax.set_title(
+            f"Power Rabi,   Navg {self.params['Navg']:.2e}\n"
+            f"resonator {self.config['resonatorLO']/1e9:.3f}GHz{self.config['resonatorIF']/1e6:+.3f}MHz\n"
+            f"qubit {self.config['qubitLO']/1e9:.3f}GHz{self.config['qubitIF']/1e6:+.0f}MHz\n"
+            f"{self.config['short_readout_len']:.0f}ns readout at {readoutpower:.1f}dBm{self.config['resonator_output_gain']:+.1f}dB\n"
+            f"{self.params['duration_ns']:.0f}ns drive,  {self.config['qubit_output_gain']:+.1f}dB output gain\n"
+            f"{self.params['drive_read_overlap_cycles']//4}ns overlap",
+            fontsize=8)
+        self.ax = ax
+
+    def _update_liveplot(self, ax, resulthandles):
+        res = self._retrieve_results(resulthandles)
+        if res['Z'] is None:
+            return
+        self.line.set_ydata(np.unwrap(np.angle(res['Z'])))
+        ax.relim(), ax.autoscale(), ax.autoscale_view()
 
 # %%
 
