@@ -27,6 +27,16 @@ GATERAMP_STEP = 5e-6
 GATERAMP_STEPTIME = 0.02
 
 #%%
+
+importlib.reload(config)
+importlib.reload(qminit)
+
+# TODO make list programmatically and check against when choosing LO freq
+# Note: requires re-opening the QM afterwards; persistent independent of config
+print("Calibrate mixers")
+mixercal = qmtools.QMMixerCalibration(qmm, config, qubitLOs=[2e9, 2.1e9, 2.2e9, 2.3e9, 2.4e9, 2.45e9, 2.6e9, 2.7e9, 2.8e9, 2.9e9, 3.01e9, 3.1e9, 3.2e9, 3.3e9, 3.4e9, 3.5e9, 3.6e9, 3.7e9])
+
+#%%
 importlib.reload(config)
 importlib.reload(qminit)
 
@@ -57,12 +67,6 @@ time_rabi_max_duration = 40 # ns
 print(f"Setting gate ({abs(gate.get_voltage()-Vgate[0])/GATERAMP_STEP*GATERAMP_STEPTIME/60:.1f}min)")
 gate.ramp_voltage(Vgate[0], GATERAMP_STEP, GATERAMP_STEPTIME)
 
-# TODO make list programmatically and check against when choosing LO freq
-# Calibrate qm, requires re-opening the QM afterwards
-# Persistent independent of config
-print("Calibrate mixers")
-qmtools.QMMixerCalibration(qmm, config, qubitLOs=[2e9, 2.1e9, 2.2e9, 2.3e9, 2.4e9, 2.45e9, 2.6e9, 2.7e9, 2.8e9, 2.9e9, 3e9, 3.1e9, 3.2e9, 3.3e9, 3.4e9, 3.5e9, 3.6e9, 3.7e9]).run()
-
 baseconfig = qmtools.config_module_to_dict(config)
 
 # # Not persistent.
@@ -82,6 +86,7 @@ def fq_estimate(deltafr):
 GATE_SETTLETIME = 5
 
 results = {
+    'mixer_calibration': [None]*Ngate,
     'resonator': [None]*Ngate,
     'resonator_P1': [None]*Ngate,
     'qubit_P2': [None]*Ngate,
@@ -110,6 +115,8 @@ try:
             if progs[j] is not None:
                 progs[j].clear_liveplot()
                 progs[j] = None
+
+        results['mixer_calibration'][i] = mixercal.run_after_interval(3*3600)
 
         localconfig = deepcopy(baseconfig)
 

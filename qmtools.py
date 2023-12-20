@@ -66,6 +66,7 @@ from copy import deepcopy
 from uncertainties import ufloat
 from scipy.optimize import curve_fit
 from scipy.signal import savgol_filter
+from datetime import datetime
 
 import numpy as np
 import matplotlib as mpl
@@ -297,6 +298,7 @@ class QMMixerCalibration (QMProgram):
         if qubitLOs is None:
             qubitLOs = [self.config['qubitLO']]
         self.params = {'qubitLOs': qubitLOs}
+        self.last_run = None
 
     def _make_program(self):
         pass
@@ -305,6 +307,8 @@ class QMMixerCalibration (QMProgram):
         raise NotImplementedError
 
     def run(self):
+        self.last_run = time.time()
+
         qm = self.qmm.open_qm(self.config['qmconfig'])
         self._init_octave(qm)
         print("Running calibration on resonator channel...")
@@ -320,6 +324,15 @@ class QMMixerCalibration (QMProgram):
             qcal.append(qm.octave.calibrate_element(
                 'qubit', [(lof, self.config['qubitIF'])]))
         return {'resonator': rcal, 'qubit': qcal} | self.params | {'config': self.config}
+
+    def run_after_interval(self, interval):
+        """Rerun calibration if more than 'interval' seconds have passed since
+        the last call to this calibration instance."""
+        if self.last_run is None or time.time() - self.last_run > interval:
+            return self.run()
+        else:
+            print(f"Last calibration started at {datetime.fromtimestamp(self.last_run).isoformat()}. No recalibration.")
+            return None
 
 
 class QMTimeOfFlight (QMProgram):
