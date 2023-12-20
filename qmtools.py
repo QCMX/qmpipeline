@@ -1211,7 +1211,7 @@ class QMTimeRabiChevrons (QMTimeRabi):
         return prog
 
     def _figtitle(self, Navg):
-        readoutpower = opx_amp2pow(self.config['readout_amp'])
+        readoutpower = opx_amp2pow(self.config['short_readout_amp'])
         drivepower = opx_amp2pow(self.config['saturation_amp'])
         return (
             f"Rabi Chevrons,   Navg {Navg:.2e}\n"
