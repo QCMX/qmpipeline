@@ -900,8 +900,8 @@ class QMReadoutSNR (QMProgram):
                         # drive ON
                         qua.align()
                         qua.play('saturation'*qua.amp(drive_amp_scale), 'qubit')
-                        qua.wait(readoutwait_cycles, 'resonator')
-                        # qua.align()
+                        # qua.wait(readoutwait_cycles, 'resonator')
+                        qua.align()
                         qua.measure(
                             'short_readout'*qua.amp(a), 'resonator', None,
                             qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
@@ -916,6 +916,8 @@ class QMReadoutSNR (QMProgram):
                 n_st.save('iteration')
                 I_st.buffer(len(freqs), len(amps), 2).average().save('I')
                 Q_st.buffer(len(freqs), len(amps), 2).average().save('Q')
+                I_st.buffer(min(self.params['Navg'], 1000), len(freqs), len(amps), 2).save('I_single_shot')
+                Q_st.buffer(min(self.params['Navg'], 1000), len(freqs), len(amps), 2).save('Q_single_shot')
 
         self.qmprog = prog
         return prog
@@ -928,6 +930,8 @@ class QMReadoutSNR (QMProgram):
         xx, yy = np.meshgrid(freqs/1e6, power, indexing='ij')
         self.img = ax.pcolormesh(xx, yy, np.full(
             (len(freqs), len(amps)), np.nan), shading='nearest')
+        self.colorbar = ax.get_figure().colorbar(self.img, ax=ax, orientation='horizontal')
+        self.colorbar.set_label("| S_ON - S_OFF |")
         ax.set_xlabel("resonator IF / MHz")
         ax.set_ylabel("readout power / dBm")
         axright = ax.secondary_yaxis(
@@ -951,7 +955,13 @@ class QMReadoutSNR (QMProgram):
         if res['Z'] is None:
             return
         dist = np.abs(res['Z'][...,1] - res['Z'][...,0])# / self.params['readout_amps'][None,:]
-        self.img.set_array(dist)
+        if not (res['I_single_shot'] is None or res['Q_single_shot'] is None):
+            Zsingle = (res['I_single_shot'] + 1j * res['Q_single_shot'])
+            snr = dist / np.std(Zsingle, axis=0)[:,:,0]
+            self.img.set_array(snr)
+            self.colorbar.set_label('SNR')
+        else:
+            self.img.set_array(dist)
         self.img.autoscale()
 
 
