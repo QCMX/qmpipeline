@@ -922,6 +922,16 @@ class QMReadoutSNR (QMProgram):
         self.qmprog = prog
         return prog
 
+    def _figtitle(self, Navg):
+        drivepower = opx_amp2pow(self.config['saturation_amp'])
+        return (
+            f"readout SNR,  Navg {Navg:.2e}\n"
+            f"resonator {self.config['resonatorLO']/1e9:.3f}GHz{self.config['resonatorIF']/1e6:+.3f}MHz\n"
+            f"qubit {self.config['qubitLO']/1e9:.3f}GHz{self.config['qubitIF']/1e6:+.3f}MHz\n"
+            f"{self.config['short_readout_len']:.0f}ns readout,  {self.config['resonator_output_gain']:+.1f}dB output gain\n"
+            f"{self.params['drive_len']:.0f}ns drive,  {drivepower:.1f}dBm{self.config['qubit_output_gain']:+.1f}dB"
+        )
+
     def _initialize_liveplot(self, ax):
         freqs = self.params['resonatorIFs']  # Hz
         amps = self.params['readout_amps']  # V
@@ -940,14 +950,7 @@ class QMReadoutSNR (QMProgram):
                 lambda a: opx_amp2pow(a, self.config['resonator_output_gain'])))
         axright.set_ylabel('readout amplitude / V')
 
-        drivepower = opx_amp2pow(self.config['saturation_amp'])
-        ax.set_title(
-            f"readout SNR,  Navg {self.params['Navg']}\n"
-            f"resonator {self.config['resonatorLO']/1e9:.3f}GHz{self.config['resonatorIF']/1e6:+.3f}MHz\n"
-            f"qubit {self.config['qubitLO']/1e9:.3f}GHz{self.config['qubitIF']/1e6:+.3f}MHz\n"
-            f"{self.config['short_readout_len']:.0f}ns readout,  {self.config['resonator_output_gain']:+.1f}dB output gain\n"
-            f"{self.params['drive_len']:.0f}ns drive,  {drivepower:.1f}dBm{self.config['qubit_output_gain']:+.1f}dB",
-            fontsize=8)
+        ax.set_title(self._figtitle(self.params['Navg']), fontsize=8)
         self.ax = ax
 
     def _update_liveplot(self, ax, resulthandles):
@@ -963,6 +966,7 @@ class QMReadoutSNR (QMProgram):
         else:
             self.img.set_array(dist)
         self.img.autoscale()
+        ax.set_title(self._figtitle(res['iteration']+1), fontsize=8)
 
 
 class QMTimeRabi (QMProgram):
@@ -1088,21 +1092,24 @@ class QMTimeRabi (QMProgram):
             raise PipelineException("Drive/readout waveform alignment not constant.")
         return overlap
 
+    def _figtitle(self, Navg):
+        readoutpower = opx_amp2pow(self.config['short_readout_amp'])
+        drivepower = opx_amp2pow(self.config['saturation_amp'])
+        return (
+            f"Time Rabi,   Navg {Navg:.2e}\n"
+            f"resonator {self.config['resonatorLO']/1e9:.3f}GHz{self.config['resonatorIF']/1e6:+.3f}MHz\n"
+            f"qubit {self.config['qubitLO']/1e9:.3f}GHz{self.config['qubitIF']/1e6:+.0f}MHz\n"
+            f"{self.config['short_readout_len']:.0f}ns readout at {readoutpower:.1f}dBm{self.config['resonator_output_gain']:+.1f}dB\n"
+            f"drive at {drivepower:.1f}dBm{self.config['qubit_output_gain']:+.1f}dB,"
+            f"  {self.params['drive_read_overlap_cycles']//4}ns overlap"
+        )
+
     def _initialize_liveplot(self, ax):
         durations = self.params['duration_ns']
         self.line, = ax.plot(durations, np.full(len(durations), np.nan))
         ax.set_xlabel("drive duration / ns")
         ax.set_ylabel("arg S")
-        readoutpower = opx_amp2pow(self.config['readout_amp'])
-        drivepower = opx_amp2pow(self.config['saturation_amp'])
-        ax.set_title(
-            f"Time Rabi,   Navg {self.params['Navg']:.2e}\n"
-            f"resonator {self.config['resonatorLO']/1e9:.3f}GHz{self.config['resonatorIF']/1e6:+.3f}MHz\n"
-            f"qubit {self.config['qubitLO']/1e9:.3f}GHz{self.config['qubitIF']/1e6:+.0f}MHz\n"
-            f"{self.config['short_readout_len']:.0f}ns readout at {readoutpower:.1f}dBm{self.config['resonator_output_gain']:+.1f}dB\n"
-            f"drive at {drivepower:.1f}dBm{self.config['qubit_output_gain']:+.1f}dB,"
-            f"  {self.params['drive_read_overlap_cycles']//4}ns overlap",
-            fontsize=8)
+        ax.set_title(self._figtitle(self.params['Navg']), fontsize=8)
         self.ax = ax
 
     def _update_liveplot(self, ax, resulthandles):
@@ -1111,6 +1118,7 @@ class QMTimeRabi (QMProgram):
             return
         self.line.set_ydata(np.unwrap(np.angle(res['Z'])))
         ax.relim(), ax.autoscale(), ax.autoscale_view()
+        ax.set_title(self._figtitle(res['iteration']+1), fontsize=8)
 
 
 class QMTimeRabiChevrons (QMTimeRabi):
@@ -1308,20 +1316,23 @@ class QMPowerRabi (QMProgram):
         self.qmprog = prog
         return prog
 
+    def _figtitle(self, Navg):
+        readoutpower = opx_amp2pow(self.config['short_readout_amp'])
+        return (
+            f"Power Rabi,   Navg {Navg:.2e}\n"
+            f"resonator {self.config['resonatorLO']/1e9:.3f}GHz{self.config['resonatorIF']/1e6:+.3f}MHz\n"
+            f"qubit {self.config['qubitLO']/1e9:.3f}GHz{self.config['qubitIF']/1e6:+.0f}MHz\n"
+            f"{self.config['short_readout_len']:.0f}ns readout at {readoutpower:.1f}dBm{self.config['resonator_output_gain']:+.1f}dB\n"
+            f"{self.params['duration_ns']:.0f}ns drive,  {self.config['qubit_output_gain']:+.1f}dB output gain\n"
+            f"{self.params['drive_read_overlap_cycles']//4}ns overlap"
+        )
+
     def _initialize_liveplot(self, ax):
         amps = self.params['drive_amps']
         self.line, = ax.plot(amps, np.full(len(amps), np.nan))
         ax.set_xlabel("drive amplitude / V")
         ax.set_ylabel("arg S")
-        readoutpower = opx_amp2pow(self.config['readout_amp'])
-        ax.set_title(
-            f"Power Rabi,   Navg {self.params['Navg']:.2e}\n"
-            f"resonator {self.config['resonatorLO']/1e9:.3f}GHz{self.config['resonatorIF']/1e6:+.3f}MHz\n"
-            f"qubit {self.config['qubitLO']/1e9:.3f}GHz{self.config['qubitIF']/1e6:+.0f}MHz\n"
-            f"{self.config['short_readout_len']:.0f}ns readout at {readoutpower:.1f}dBm{self.config['resonator_output_gain']:+.1f}dB\n"
-            f"{self.params['duration_ns']:.0f}ns drive,  {self.config['qubit_output_gain']:+.1f}dB output gain\n"
-            f"{self.params['drive_read_overlap_cycles']//4}ns overlap",
-            fontsize=8)
+        ax.set_title(self._figtitle(self.params['Navg']), fontsize=8)
         self.ax = ax
 
     def _update_liveplot(self, ax, resulthandles):
@@ -1330,6 +1341,7 @@ class QMPowerRabi (QMProgram):
             return
         self.line.set_ydata(np.unwrap(np.angle(res['Z'])))
         ax.relim(), ax.autoscale(), ax.autoscale_view()
+        ax.set_title(self._figtitle(res['iteration']+1), fontsize=8)
 
 # %%
 
