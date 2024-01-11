@@ -21,38 +21,41 @@ PHASE_CORR = 1.6239384827049928e-06
 #  31.6mV = -20dBm
 #  17.8mV = -25dBm
 #  10.0mV = -30dBm
+#   3.16mV = -40dBm
 
 # Octave parameters
 resonator_output_gain = -20 # Octave RF1, range -20 to +20dB
 resonator_input_gain  = +10 # OPX IN, range -12 to +20dB
-qubit_output_gain     = 0 # Octave RF2, range -20 to +20dB
+qubit_output_gain     = 5 # Octave RF2, range -20 to +20dB
+# Qubit output gain is limited by 2*drive LO and LO + IF also going through
+# the cavity and saturating the readout.
 
 # ADC offset in Volts
-adcoffset = np.array([0.033352255153200054 , 0.039610600610871925])
+adcoffset = np.array([0.033352255153200054 , 0.03991713837942661])
 
 ## Frequencies
 resonatorLO = 4.8500e9
-resonatorIF = 0.20715e9
+resonatorIF = 0.2064e9
 # 20ns readout -> 200MHz IF
 # 50ns readout -> 100MHz IF
 
-qubitLO = 2.6e9
-qubitIF = 339e6
+qubitLO = 3.0e9
+qubitIF = -150e6
 
 # For resonator width 450kHz width, ie. t=2us lifetime
 # choose at least 6us=3t, ie. 1500cycles
-cooldown_clk = 1000 # 4ns cycles
+cooldown_clk = 6000 # 4ns cycles
 
 ## Readout pulse parameters
-const_len = 16
+const_len = 10000
 const_amp = 0.1 #0.316
 
 readout_len = 20000 # 52 # ns
-readout_amp = 0.316
+readout_amp = 0.0316
 
-short_readout_len = 100 # ns
-short_readout_amp = 0.0316
-short_readout_amp_gain = 20 # dB added to resonator output gain
+short_readout_len = 1000 # ns
+short_readout_amp = 0.316
+short_readout_amp_gain = 0#+20 # dB added to resonator output gain
 
 long_readout_len = 7000
 long_readout_amp = 0.1
@@ -65,7 +68,7 @@ time_of_flight = 24 + 252
 
 # Needs to be several T1 so that the final state is an equal population of |0> and |1>
 # Should be longer than readout_len for some protocols
-saturation_len = 21000 # ns
+saturation_len = 21000#21000#500 #16 # ns
 saturation_amp = 0.316 #316
 
 preload_len = 16 # ns
@@ -73,21 +76,66 @@ preload_amp = 0.5
 preload_wf = np.zeros(max(16, preload_len))
 preload_wf[-preload_len:] = preload_amp
 
-# IQ rotated demodulation: rotation angle:
+# Pi pulse parameters
+pi_len = 100  # in units of ns
+pi_amp = 0.149  # in units of volts
+pi_wf = (pi_amp * (gaussian(pi_len, pi_len / 5) -
+                   gaussian(pi_len, pi_len / 5)[-1])).tolist()  # waveform
+minus_pi_wf = ((-1) * pi_amp * (gaussian(pi_len, pi_len / 5) -
+                   gaussian(pi_len, pi_len / 5)[-1])).tolist()  # waveform
+
+
+# Pi_half pulse parameters
+pi_half_len = 100  # in units of ns
+pi_half_amp = 0.5 * pi_amp  # in units of volts
+pi_half_wf = (pi_half_amp * (gaussian(pi_half_len, pi_half_len / 5) -
+                             gaussian(pi_half_len, pi_half_len / 5)[-1])).tolist()  # waveform
+minus_pi_half_wf = ((-1) * pi_half_amp * (gaussian(pi_half_len, pi_half_len / 5) -
+                             gaussian(pi_half_len, pi_half_len / 5)[-1])).tolist()  # waveform
+
+
+# Gaussian pulse parameters
+# The gaussian is used when calibrating pi and pi_half pulses
+gauss_len = const_len
+gauss_amp = const_amp
+gauss_wf = (gauss_amp * (gaussian(gauss_len, gauss_len / 5) -
+                         gaussian(gauss_len, gauss_len / 5)[-1])).tolist()  # waveform
+
+# Flux:
+square_flux_amp = 0.3
+triangle_flux_amp = 0.3
+triangle_wf = [triangle_flux_amp * i/7 for i in range(8)] + [triangle_flux_amp * (1 - i/7) for i in range(8)]
+
+# Rotation angle:
 rotation_angle = (-8.0/180) * np.pi  # angle in degrees
 
+# Used to correct for IQ mixer imbalances
+def IQ_imbalance(g, phi):
+    c = np.cos(phi)
+    s = np.sin(phi)
+    N = 1 / ((1 - g ** 2) * (2 * c ** 2 - 1))
+    return [float(N * x) for x in [(1 - g) * c, (1 + g) * s, (1 - g) * s, (1 + g) * c]]
+
 qmconfig = {
+
     'version': 1,
+
     'controllers': {
+
         'con1': {
+
             'type': 'opx1',
+
             'analog_outputs': {
                 3: {'offset': 0.0},  # I resonator
                 4: {'offset': 0.0},  # Q resonator
+                5: {'offset': 0.0},  # Q resonator
                 7: {'offset': -0.03259},  # I resonator
                 8: {'offset': -0.04925},  # Q resonator
             },
+
             'digital_outputs': {},
+
             'analog_inputs': {
                 # Gain range -12 to +20dB
                 1: {'offset': adcoffset[0], 'gain_db': resonator_input_gain},  # I from down conversion
@@ -97,6 +145,7 @@ qmconfig = {
     },
 
     'elements': {
+
         'qubit': {
             'mixInputs': {
                 'I': ('con1', 3),
@@ -108,6 +157,17 @@ qmconfig = {
             'operations': {
                 'const': 'const_pulse',
                 'saturation': 'saturation_pulse',
+                'gaussian': 'gaussian_pulse',
+                'pi': 'pi_pulse',
+                'pi_half': 'pi_half_pulse',
+                'X': 'Xpi_pulse',
+                '-X': '-Xpi_pulse',
+                'X/2': 'Xpi_half_pulse',
+                '-X/2': '-Xpi_half_pulse',
+                'Y': 'Ypi_pulse',
+                '-Y': '-Ypi_pulse',
+                'Y/2': 'Ypi_half_pulse',
+                '-Y/2': '-Ypi_half_pulse',
             },
         },
 
@@ -133,9 +193,19 @@ qmconfig = {
                 'out2': ('con1', 2),
             },
         },
+
+        'flux': {
+            'singleInput': {'port': ('con1', 5)},
+            'operations': {
+                'offset': 'square_pulse',
+                'triangle': 'triangle_pulse',
+            },
+        },
+
     },
 
     'pulses': {
+
         'const_pulse': {
             'operation': 'control',
             'length': const_len,  # in ns
@@ -153,7 +223,7 @@ qmconfig = {
                 'Q': 'zero_wf'
             }
         },
-
+        
         'preload_pulse': {
             'operation': 'control',
             'length': len(preload_wf),
@@ -163,6 +233,117 @@ qmconfig = {
             }
         },
 
+        'gaussian_pulse': {
+            'operation': 'control',
+            'length': gauss_len,  # in ns
+            'waveforms': {
+                'I': 'gaussian_wf',
+                'Q': 'zero_wf'
+            }
+        },
+
+        'pi_pulse': {
+            'operation': 'control',
+            'length': pi_len,  # in ns
+            'waveforms': {
+                'I': 'pi_wf',
+                'Q': 'zero_wf',
+            },
+        },
+
+        'pi_half_pulse': {
+            'operation': 'control',
+            'length': pi_half_len,  # in ns
+            'waveforms': {
+                'I': 'pi_half_wf',
+                'Q': 'zero_wf',
+            },
+        },
+
+        'Xpi_pulse': {
+            'operation': 'control',
+            'length': pi_len,  # in ns
+            'waveforms': {
+                'I': 'pi_wf',
+                'Q': 'zero_wf',
+            },
+        },
+
+        '-Xpi_pulse': {
+            'operation': 'control',
+            'length': pi_len,  # in ns
+            'waveforms': {
+                'I': '-pi_wf',
+                'Q': 'zero_wf',
+            },
+        },
+
+        'Xpi_half_pulse': {
+            'operation': 'control',
+            'length': pi_half_len,  # in ns
+            'waveforms': {
+                'I': 'pi_half_wf',
+                'Q': 'zero_wf',
+            },
+        },
+
+        '-Xpi_half_pulse': {
+            'operation': 'control',
+            'length': pi_half_len,  # in ns
+            'waveforms': {
+                'I': '-pi_half_wf',
+                'Q': 'zero_wf',
+            },
+        },
+
+        'Ypi_pulse': {
+            'operation': 'control',
+            'length': pi_len,  # in ns
+            'waveforms': {
+                'I': 'zero_wf',
+                'Q': 'pi_wf',
+            },
+        },
+
+        '-Ypi_pulse': {
+            'operation': 'control',
+            'length': pi_len,  # in ns
+            'waveforms': {
+                'I': 'zero_wf',
+                'Q': '-pi_wf',
+            },
+        },
+
+        'Ypi_half_pulse': {
+            'operation': 'control',
+            'length': pi_half_len,  # in ns
+            'waveforms': {
+                'I': 'zero_wf',
+                'Q': 'pi_half_wf',
+            },
+        },
+
+        '-Ypi_half_pulse': {
+            'operation': 'control',
+            'length': pi_half_len,  # in ns
+            'waveforms': {
+                'I': 'zero_wf',
+                'Q': '-pi_half_wf',
+            },
+        },
+
+        'square_pulse': {
+            "operation": "control",
+            "length": 16,  # in ns
+            "waveforms": {"single": "square_wf"}
+        },
+
+        'triangle_pulse': {
+            "operation": "control",
+            "length": 16,  # in ns
+            "waveforms": {"single": "triangle_wf"}
+        },
+
         'short_readout_pulse': {
             "operation": "measurement",
             "length": short_readout_len,  # in ns
@@ -170,6 +351,7 @@ qmconfig = {
                 'I': 'short_readout_wf',
                 'Q': 'zero_wf'
             },
+            'digital_marker': 'ON',
             'integration_weights': {
                 'cos': 'short_cos_weights',
                 'sin': 'short_sin_weights',
@@ -187,6 +369,7 @@ qmconfig = {
                 'I': 'readout_wf',
                 'Q': 'zero_wf'
             },
+            "digital_marker": "ON",
             "integration_weights": {
                 'cos': 'cos_weights',
                 'sin': 'sin_weights',
@@ -204,6 +387,7 @@ qmconfig = {
                 'I': 'long_readout_wf',
                 'Q': 'zero_wf'
             },
+            "digital_marker": "ON",
             "integration_weights": {
                 'cos': 'long_cos_weights',
                 'sin': 'long_sin_weights',
@@ -223,77 +407,108 @@ qmconfig = {
         'short_readout_wf': {"type": "constant", "sample": short_readout_amp},
         'readout_wf': {"type": "constant", "sample": readout_amp},
         'long_readout_wf': {"type": "constant", "sample": long_readout_amp},
+        'square_wf': {"type": "constant", "sample": square_flux_amp},
+        'triangle_wf': {"type": "arbitrary", "samples": triangle_wf},
+        'gaussian_wf': {"type": "arbitrary", "samples": gauss_wf},
+        'pi_wf': {'type': 'arbitrary', 'samples': pi_wf},
+        '-pi_wf': {'type': 'arbitrary', 'samples': minus_pi_wf},
+        'pi_half_wf': {'type': 'arbitrary', 'samples': pi_half_wf},
+        '-pi_half_wf': {'type': 'arbitrary', 'samples': minus_pi_half_wf},
     },
-    'digital_waveforms': {},
+
+    'digital_waveforms': {
+
+        "ON": {"samples": [(1, 0)]},  # commonly used for measurement pulses, e.g., in a readout pulse
+
+    },
+
     'integration_weights': {
+
         'short_cos_weights': {
             "cosine": [(1.0, short_readout_len)],  # Previous format for versions before 1.20: [1.0] * readout_len
             "sine": [(0.0, short_readout_len)],
         },
+
         'short_sin_weights': {
             "cosine": [(0.0, short_readout_len)],
             "sine": [(1.0, short_readout_len)],
         },
+
         'short_minus_sin_weights': {
             "cosine": [(0.0, short_readout_len)],
             "sine": [(-1.0, short_readout_len)],
         },
+
         'short_rotated_cos_weights': {
             "cosine": [(np.cos(rotation_angle), short_readout_len)],
             "sine": [(-np.sin(rotation_angle), short_readout_len)],
         },
+
         'short_rotated_sin_weights': {
             "cosine": [(np.sin(rotation_angle), short_readout_len)],
             "sine": [(np.cos(rotation_angle), short_readout_len)],
         },
+
         'short_rotated_minus_sin_weights': {
             "cosine": [(-np.sin(rotation_angle), short_readout_len)],
             "sine": [(-np.cos(rotation_angle), short_readout_len)],
         },
+
         'cos_weights': {
             "cosine": [(1.0, readout_len)],  # Previous format for versions before 1.20: [1.0] * readout_len
             "sine": [(0.0, readout_len)],
         },
+
         'sin_weights': {
             "cosine": [(0.0, readout_len)],
             "sine": [(1.0, readout_len)],
         },
+
         'minus_sin_weights': {
             "cosine": [(0.0, readout_len)],
             "sine": [(-1.0, readout_len)],
         },
+
         'rotated_cos_weights': {
             "cosine": [(np.cos(rotation_angle), readout_len)],
             "sine": [(-np.sin(rotation_angle), readout_len)],
         },
+
         'rotated_sin_weights': {
             "cosine": [(np.sin(rotation_angle), readout_len)],
             "sine": [(np.cos(rotation_angle), readout_len)],
         },
+
         'rotated_minus_sin_weights': {
             "cosine": [(-np.sin(rotation_angle), readout_len)],
             "sine": [(-np.cos(rotation_angle), readout_len)],
         },
+
         'long_cos_weights': {
             "cosine": [(1.0, long_readout_len)],  # Previous format for versions before 1.20: [1.0] * readout_len
             "sine": [(0.0, long_readout_len)],
         },
+
         'long_sin_weights': {
             "cosine": [(0.0, long_readout_len)],
             "sine": [(1.0, long_readout_len)],
         },
+
         'long_minus_sin_weights': {
             "cosine": [(0.0, long_readout_len)],
             "sine": [(-1.0, long_readout_len)],
         },
+
         'long_rotated_cos_weights': {
             "cosine": [(np.cos(rotation_angle), long_readout_len)],
             "sine": [(-np.sin(rotation_angle), long_readout_len)],
         },
+
         'long_rotated_sin_weights': {
             "cosine": [(np.sin(rotation_angle), long_readout_len)],
             "sine": [(np.cos(rotation_angle), long_readout_len)],
         },
+
         'long_rotated_minus_sin_weights': {
             "cosine": [(-np.sin(rotation_angle), long_readout_len)],
             "sine": [(-np.cos(rotation_angle), long_readout_len)],
@@ -301,19 +516,26 @@ qmconfig = {
     },
 
     'mixers': {
-        "octave_octave1_4": [
-            {
-                "intermediate_frequency": resonatorIF,
-                "lo_frequency": resonatorLO,
-                "correction": (1.0536929927766323, 0.18822958320379257, 0.18970587104558945, 1.045493170619011),
-            },
-        ],
-        "octave_octave1_2": [
-            {
-                "intermediate_frequency": qubitIF,
-                "lo_frequency": qubitLO,
-                "correction": (1,0,0,1),
-            },
-        ],
+            "octave_octave1_4": [
+                {
+                    "intermediate_frequency": resonatorIF,
+                    "lo_frequency": resonatorLO,
+                    "correction": (1.0536929927766323, 0.18822958320379257, 0.18970587104558945, 1.045493170619011),
+                },
+            ],
+            
+            "octave_octave1_2": [
+                {
+                    "intermediate_frequency": qubitIF,
+                    "lo_frequency": qubitLO,
+                    "correction": IQ_imbalance(-0.05,0.10),
+                },
+            ],
     }
 }
+
+# Expose content of this module as object to be included in experiment metadata
+meta = {item: globals()[item] for item in dir() if not (
+    item.startswith("__") or item == 'meta'
+    or inspect.ismodule(globals()[item])
+    or hasattr(globals()[item], '__call__'))}

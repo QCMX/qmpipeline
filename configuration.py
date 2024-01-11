@@ -21,30 +21,31 @@ PHASE_CORR = 1.6239384827049928e-06
 #  31.6mV = -20dBm
 #  17.8mV = -25dBm
 #  10.0mV = -30dBm
+#   3.16mV = -40dBm
 
 # Octave parameters
 resonator_output_gain = -20 # Octave RF1, range -20 to +20dB
 resonator_input_gain  = +10 # OPX IN, range -12 to +20dB
-qubit_output_gain     = 0 # Octave RF2, range -20 to +20dB
+qubit_output_gain     = 5 # Octave RF2, range -20 to +20dB
 
 # ADC offset in Volts
-adcoffset = np.array([0.033352255153200054 , 0.039610600610871925])
+adcoffset = np.array([0.033352255153200054 , 0.03991713837942661])
 
 ## Frequencies
 resonatorLO = 4.8500e9
-resonatorIF = 0.2068e9
+resonatorIF = 0.2066e9
 # 20ns readout -> 200MHz IF
 # 50ns readout -> 100MHz IF
 
-qubitLO = 2.5e9
-qubitIF = -300e6
+qubitLO = 2.7e9
+qubitIF = -270e6
 
 # For resonator width 450kHz width, ie. t=2us lifetime
 # choose at least 6us=3t, ie. 1500cycles
-cooldown_clk = 1000 # 4ns cycles
+cooldown_clk = 6000 # 4ns cycles
 
 ## Readout pulse parameters
-const_len = 16
+const_len = 10000
 const_amp = 0.1 #0.316
 
 readout_len = 20000 # 52 # ns
@@ -52,7 +53,7 @@ readout_amp = 0.0316
 
 short_readout_len = 20000 # ns
 short_readout_amp = 0.0316
-short_readout_amp_gain = 0 #20 # dB added to resonator output gain
+short_readout_amp_gain = 0#+20 # dB added to resonator output gain
 
 long_readout_len = 7000
 long_readout_amp = 0.1
@@ -65,8 +66,8 @@ time_of_flight = 24 + 252
 
 # Needs to be several T1 so that the final state is an equal population of |0> and |1>
 # Should be longer than readout_len for some protocols
-saturation_len = 21000#500 #16 # ns
-saturation_amp = 0.316#316 #316
+saturation_len = 21000#21000#500 #16 # ns
+saturation_amp = 0.316 #316
 
 preload_len = 16 # ns
 preload_amp = 0.5
@@ -105,6 +106,13 @@ triangle_wf = [triangle_flux_amp * i/7 for i in range(8)] + [triangle_flux_amp *
 
 # Rotation angle:
 rotation_angle = (-8.0/180) * np.pi  # angle in degrees
+
+# Used to correct for IQ mixer imbalances
+def IQ_imbalance(g, phi):
+    c = np.cos(phi)
+    s = np.sin(phi)
+    N = 1 / ((1 - g ** 2) * (2 * c ** 2 - 1))
+    return [float(N * x) for x in [(1 - g) * c, (1 + g) * s, (1 - g) * s, (1 + g) * c]]
 
 qmconfig = {
 
@@ -518,7 +526,7 @@ qmconfig = {
                 {
                     "intermediate_frequency": qubitIF,
                     "lo_frequency": qubitLO,
-                    "correction": (1,0,0,1),
+                    "correction": IQ_imbalance(-0.05,0.10),
                 },
             ],
     }

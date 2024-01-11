@@ -9,7 +9,7 @@ from scipy.signal import savgol_filter
 
 from helpers import data_path, mpl_pause, DurationEstimator
 
-import configuration as config
+import configuration_pipeline as config
 import qminit, qmtools
 
 qmm = qminit.connect()
