@@ -377,10 +377,10 @@ class QMTimeOfFlight (QMProgram):
         newoffs1 = config['qmconfig']['controllers']['con1']['analog_inputs'][1]['offset'] - np.mean(tof['adc1'])/2**12
         newoffs2 = config['qmconfig']['controllers']['con1']['analog_inputs'][2]['offset'] - np.mean(tof['adc2'])/2**12
         if printinfo:
-            print('    Single run noise:', np.std(tof['adc1_single_run']), np.std(tof['adc1_single_run']), 'ADC units')
+            print('    Single run noise:', np.std(tof['adc1_single_run']), np.std(tof['adc2_single_run']), 'ADC units')
             print('    Exp. avg. noise:', np.std(tof['adc1_single_run'])/np.sqrt(tof['Navg']), np.std(tof['adc2_single_run'])/np.sqrt(tof['Navg']), 'ADC units')
             #print('Averaged noise:', np.std(np.diff(tof['adc1']))/np.sqrt(2), np.std(np.diff(tof['adc2']))/np.sqrt(2))
-            print('    Averaged noise:', np.std(tof['adc1']), np.std(tof['adc1']), 'ADC units')
+            print('    Averaged noise:', np.std(tof['adc1']), np.std(tof['adc2']), 'ADC units')
             print('    Offset error:', offserr, 'ADC')
             print('    Offset error uncertainty:', np.std(tof['adc1'])/np.sqrt(nsamples), np.std(tof['adc2'])/np.sqrt(nsamples), 'ADC samples')
             print('    Offset correct to:', newoffs1, newoffs2, 'V')
