@@ -864,7 +864,7 @@ class QMQubitSpec_P2 (QMProgram):
         xx, yy = np.meshgrid(freqs/1e6, drivepower, indexing='ij')
         self.img = ax.pcolormesh(xx, yy, np.full(
             (len(freqs), len(amps)), np.nan), shading='nearest')
-        self.colorbar = ax.get_figure().colorbar(self.img, ax=ax, orientation='horizontal')
+        self.colorbar = ax.get_figure().colorbar(self.img, ax=ax, orientation='horizontal', shrink=0.9)
         self.colorbar.set_label('arg S')
 
         ax.set_xlabel(
@@ -964,9 +964,9 @@ class QMReadoutSNR (QMProgram):
                 "Readout amplitudes cannot be scaled to target voltage because ratio is out of scaling range [-2 to 2].")
 
         assert self.params['drive_len'] % 4 == 0
-        drive_len_cycles = self.params['drive_len'] // 4
-        readoutwait_cycles = drive_len_cycles - self.config['short_readout_len']//4
-        assert readoutwait_cycles >= 4
+        #drive_len_cycles = self.params['drive_len'] // 4
+        #readoutwait_cycles = drive_len_cycles - self.config['short_readout_len']//4
+        #assert readoutwait_cycles >= 4
 
         with qua.program() as prog:
             n = qua.declare(int)
@@ -1037,7 +1037,7 @@ class QMReadoutSNR (QMProgram):
         xx, yy = np.meshgrid(freqs/1e6, power, indexing='ij')
         self.img = ax.pcolormesh(xx, yy, np.full(
             (len(freqs), len(amps)), np.nan), shading='nearest')
-        self.colorbar = ax.get_figure().colorbar(self.img, ax=ax, orientation='horizontal')
+        self.colorbar = ax.get_figure().colorbar(self.img, ax=ax, orientation='horizontal', shrink=0.9)
         self.colorbar.set_label("| S_ON - S_OFF |")
         ax.set_xlabel("resonator IF / MHz")
         ax.set_ylabel("readout power / dBm")
@@ -1333,7 +1333,7 @@ class QMTimeRabiChevrons (QMTimeRabi):
         xx, yy = np.meshgrid(durations, freqs/1e6, indexing='ij')
         self.img = ax.pcolormesh(xx, yy, np.full(
             (len(durations), len(freqs)), np.nan), shading='nearest')
-        self.colorbar = ax.get_figure().colorbar(self.img, ax=ax, orientation='horizontal')
+        self.colorbar = ax.get_figure().colorbar(self.img, ax=ax, orientation='horizontal', shrink=0.9)
         self.colorbar.set_label("arg S")
         ax.set_ylabel("drive IF / MHz")
         ax.set_xlabel("drive duration / ns")
