@@ -37,8 +37,8 @@ resonatorIF = 0.2066e9
 # 20ns readout -> 200MHz IF
 # 50ns readout -> 100MHz IF
 
-qubitLO = 2.7e9
-qubitIF = -270e6
+qubitLO = 2.0e9
+qubitIF = -150e6#-380e6
 
 # For resonator width 450kHz width, ie. t=2us lifetime
 # choose at least 6us=3t, ie. 1500cycles

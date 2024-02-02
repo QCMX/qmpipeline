@@ -63,15 +63,7 @@ qminit.octave_setup_resonator(qm, config)
 
 print("Running calibration on resonator channel...")
 qm.octave.calibrate_element('resonator', [
-    (config.resonatorLO, 10e6),
-    (config.resonatorLO, 50e6),
-    (config.resonatorLO, 100e6),
-    (config.resonatorLO, 150e6),
-    (config.resonatorLO, 200e6),
-    (config.resonatorLO, 250e6),
-    (config.resonatorLO, 300e6),
-    (config.resonatorLO, 350e6),
-    #(config.resonatorLO, config.resonatorIF)
+    (config.resonatorLO, config.resonatorIF)
     ])
 
 # Need to reopen qm to apply calibration settings
@@ -86,7 +78,7 @@ importlib.reload(config)
 importlib.reload(qminit)
 
 with qua.program() as mixer_cal_qubit:
-    qua.update_frequency('qubit', -300e6)
+    #qua.update_frequency('qubit', -385e6)
     with qua.infinite_loop_():
         qua.play('const', 'qubit')
 
@@ -120,6 +112,17 @@ qm.octave.set_rf_output_mode('resonator', octave.RFOutputMode.off)
 qm.octave.set_rf_output_mode('qubit', octave.RFOutputMode.off)
 
 #%%
+
+qms = qmm.list_open_quantum_machines()
+assert len(qms) <= 1
+if qms:
+    print("Close", qm)
+    qm = qmm.get_qm(qms[0])
+    qm.close()
+else:
+    print("No QM open")
+
+#%%
 import numpy as np
 
 fs = np.arange(-450e6, +450e6, 1e6)
@@ -151,3 +154,29 @@ def IQ_imbalance(g, phi):
     s = np.sin(phi)
     N = 1 / ((1 - g ** 2) * (2 * c ** 2 - 1))
     return [float(N * x) for x in [(1 - g) * c, (1 + g) * s, (1 - g) * s, (1 + g) * c]]
+
+#%%
+#Check calibration for a list of LO frequencies
+
+import numpy as np
+
+qubitLOs = [2e9, 2.1e9, 2.2e9, 2.3e9, 2.4e9, 2.45e9, 2.6e9, 2.7e9, 2.8e9, 2.9e9, 3e9, 3.1e9, 3.2e9, 3.3e9, 3.4e9, 3.5e9, 3.6e9, 3.7e9]
+for qubitLO in qubitLOs:
+    print(qubitLO/1e9, "GHz")
+    config.qubitLO = qubitLO
+    config.qmconfig['elements']['qubit']['mixInputs']['lo_frequency'] = qubitLO
+    config.qmconfig['mixers']['octave_octave1_2'][0]['lo_frequency'] = qubitLO
+    fs = np.arange(-450e6, +450e6, 1e6)
+    with qua.program() as ifview_qubit:
+        n = qua.declare(int)
+        f = qua.declare(int)
+        with qua.infinite_loop_():
+            with qua.for_(*from_array(f, fs)):
+                qua.update_frequency('qubit', -50e6)
+                with qua.for_(n, 0, n < 1000, n + 1):
+                    qua.play('const', 'qubit')
+
+    qm = qmm.open_qm(config.qmconfig)
+    qminit.octave_setup_qubit(qm, config)
+    job = qm.execute(ifview_qubit)
+    input("Press enter for next LO freq")

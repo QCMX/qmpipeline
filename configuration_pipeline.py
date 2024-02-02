@@ -50,12 +50,11 @@ cooldown_clk = 6000 # 4ns cycles
 const_len = 10000
 const_amp = 0.1 #0.316
 
-readout_len = 20000 # 52 # ns
+readout_len = 20000 # ns
 readout_amp = 0.0316
 
 short_readout_len = 1000 # ns
 short_readout_amp = 0.316
-short_readout_amp_gain = 0#+20 # dB added to resonator output gain
 
 long_readout_len = 7000
 long_readout_amp = 0.1
@@ -69,7 +68,7 @@ time_of_flight = 24 + 252
 # Needs to be several T1 so that the final state is an equal population of |0> and |1>
 # Should be longer than readout_len for some protocols
 saturation_len = 21000#21000#500 #16 # ns
-saturation_amp = 0.316 #316
+saturation_amp = 0.316
 
 preload_len = 16 # ns
 preload_amp = 0.5
