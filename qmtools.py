@@ -59,6 +59,8 @@ Time Rabi: readout amplitude, gain, resonator IF, qubit LO, qubit IF, drive amp,
 Power Rabi: ...
 """
 
+# TODO rename "saturation" pulse to "drive" because we use it for all drive pulses, including coherent ones
+
 import time
 import inspect
 import warnings
@@ -1075,7 +1077,7 @@ class QMReadoutSNR (QMProgram):
         else:
             self.img.set_array(dist)
         self.img.autoscale()
-        ax.set_title(self._figtitle(res['iteration']+1), fontsize=8)
+        ax.set_title(self._figtitle((res['iteration'] or 0)+1), fontsize=8)
 
 
 class QMTimeRabi (QMProgram):
@@ -1227,7 +1229,7 @@ class QMTimeRabi (QMProgram):
             return
         self.line.set_ydata(np.unwrap(np.angle(res['Z'])))
         ax.relim(), ax.autoscale(), ax.autoscale_view()
-        ax.set_title(self._figtitle(res['iteration']+1), fontsize=8)
+        ax.set_title(self._figtitle((res['iteration'] or 0)+1), fontsize=8)
 
 
 class QMTimeRabiChevrons (QMTimeRabi):
@@ -1358,7 +1360,7 @@ class QMTimeRabiChevrons (QMTimeRabi):
             return
         self.img.set_array(np.unwrap(np.unwrap(np.angle(res['Z'])), axis=0).T)
         self.img.autoscale()
-        self.ax.set_title(self._figtitle(res['iteration']+1), fontsize=8)
+        self.ax.set_title(self._figtitle((res['iteration'] or 0)+1), fontsize=8)
 
 
 class QMPowerRabi (QMProgram):
@@ -1450,7 +1452,7 @@ class QMPowerRabi (QMProgram):
             return
         self.line.set_ydata(np.unwrap(np.angle(res['Z'])))
         ax.relim(), ax.autoscale(), ax.autoscale_view()
-        ax.set_title(self._figtitle(res['iteration']+1), fontsize=8)
+        ax.set_title(self._figtitle((res['iteration'] or 0)+1), fontsize=8)
 
 
 class QMPowerRabi_Gaussian (QMProgram):
