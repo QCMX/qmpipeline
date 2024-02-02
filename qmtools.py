@@ -237,6 +237,9 @@ class QMProgram (object):
 
     def _retrieve_results(self, resulthandles=None):
         """Dictionary with values of all output streams and input parameters.
+        Reworks named fields of streams so that res['I'] are the values and
+        res['I_timestamps'] are the associated timestamps if available.
+
         Magically combines I and Q into complex Z.
 
         Values of results may be None if the streams have not yet produced
@@ -248,16 +251,23 @@ class QMProgram (object):
                 resulthandles = self.last_job.result_handles
             else:
                 raise ResultUnavailableError("No results cached yet.")
-        res = {k: (f.fetch_all() if len(f) else None) for k, f in resulthandles._all_results.items()}
+        fetched = {k: (f.fetch_all() if len(f) else None) for k, f in resulthandles._all_results.items()}
+        # Rework named fields
+        res = {k: v for k, v in fetched.items() if v is None or v.dtype.names is None}
+        res |= {k: v['value'] for k, v in fetched.items() if v is not None and v.dtype.names is not None and 'value' in v.dtype.names}
+        res |= {k+'_timestamps': v['timestamp'] for k, v in fetched.items() if v is not None and v.dtype.names is not None and 'timestamp' in v.dtype.names}
         # Copy results because they are mutable and we don't want to contaminate
         # the original results in job.result_handles
         res = {k: (np.copy(a) if isinstance(a, np.ndarray) else a)
                for k, a in res.items()}
-        # if any(v is None for v in res.values()):
-        #     return None
+        # Magically prepare Z
         if 'I' in res and 'Q' in res and 'Z' not in res:
             if res['I'] is not None and res['Q'] is not None:
-                res['Z'] = (res['I'] + 1j * res['Q'])
+                try:
+                    res['Z'] = (res['I'] + 1j * res['Q'])
+                except ValueError:
+                    # Probably the shapes didnt match yet
+                    res['Z'] = None
             else:
                 res['Z'] = None
         # Also save the time it took to run and start time (UTC timestamps)
@@ -690,6 +700,88 @@ class QMQubitSpec (QMProgram):
             return
         self.line.set_ydata(np.abs(res['Z']) /
                             self.config['readout_len'] * 2**12)
+        ax.relim(), ax.autoscale(), ax.autoscale_view()
+
+
+class QMNoiseSpectrum (QMProgram):
+    """Readout many times to later do FFT of it.
+    Does not use the cooldown time."""
+
+    def __init__(self, qmm, config, Nsamples, wait_ns=16):
+        super().__init__(qmm, config)
+        self.params = {'Nsamples': Nsamples, 'wait_ns': wait_ns}
+
+    def _make_program(self):
+        amp_scale = self.config['readout_amp'] / \
+            self.config['qmconfig']['waveforms']['readout_wf']['sample']
+        assert self.config['readout_len'] == self.config['qmconfig']['pulses']['readout_pulse']['length']
+
+        with qua.program() as prog:
+            n = qua.declare(int)
+            I = qua.declare(qua.fixed)
+            Q = qua.declare(qua.fixed)
+            I_st = qua.declare_stream()
+            Q_st = qua.declare_stream()
+            n_st = qua.declare_stream()
+
+            qua.update_frequency('resonator', self.config['resonatorIF'])
+
+            with qua.for_(n, 0, n < self.params['Nsamples'], n + 1):
+                qua.measure('readout'*qua.amp(amp_scale), 'resonator', None,
+                            qua.dual_demod.full(
+                                'cos', 'out1', 'sin', 'out2', I),
+                            qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
+                qua.save(I, I_st)
+                qua.save(Q, Q_st)
+                qua.save(n, n_st)
+                qua.wait(self.params['wait_ns']//4)
+
+            with qua.stream_processing():
+                n_st.save('iteration')
+                I_st.with_timestamps().save_all('I')
+                Q_st.save_all('Q')
+
+        self.qmprog = prog
+        return prog
+
+    def _retrieve_results(self, resulthandles=None):
+        """Normalizes readout and calculates FFT with correct freq axis"""
+        res = super()._retrieve_results(resulthandles)
+        # Normalize
+        nsamples = self.config['qmconfig']['pulses']['readout_pulse']['length']
+        # Note: don't use (a *= 3) because it modifies the result in the iterator.
+        if res['I'] is not None:
+            res['I'] = res['I'] * (2**12 / nsamples)
+        if res['Q'] is not None:
+            res['Q'] = res['Q'] * (2**12 / nsamples)
+        if res['Z'] is not None:
+            res['Z'] = res['Z'] * (2**12 / nsamples)
+            # Calculated FFT
+            res['fft'] = np.fft.fftshift(np.fft.fft(res['Z'] - np.mean(res['Z']))) / res['Z'].size
+            # Note: I always has same shape as I_timestamps
+            # So Z is guaranteed to have same shape as t
+            t = res['I_timestamps'] * 1e-9
+            dt = (np.max(t) - np.min(t)) / (t.size-1)
+            res['fftfreq'] = np.fft.fftshift(np.fft.fftfreq(t.size, dt))
+        return res
+
+    def _initialize_liveplot(self, ax):
+        readoutpower = opx_amp2pow(self.config['readout_amp'])
+        line, = ax.plot([np.nan], [np.nan])
+        ax.set_xlabel("Frequency / Hz")
+        ax.set_ylabel("|FFT S|")
+        ax.set_title(
+            f"resonator noise spectrum   {self.params['Nsamples']} samples\n"
+            f"resonator {self.config['resonatorLO']/1e9:.3f}GHz{self.config['resonatorIF']/1e6:+.3f}MHz\n"
+            f"{self.config['readout_len']/1e3:.0f}us readout at {readoutpower:.1f}dBm{self.config['resonator_output_gain']:+.1f}dB",
+            fontsize=8)
+        self.line = line
+
+    def _update_liveplot(self, ax, resulthandles):
+        res = self._retrieve_results(resulthandles)
+        if 'fft' not in res:
+            return
+        self.line.set_data(res['fftfreq'], np.abs(res['fft']))
         ax.relim(), ax.autoscale(), ax.autoscale_view()
 
 
@@ -1361,25 +1453,43 @@ if __name__ == '__main__':
     # results = p.run()
     # print(results.keys())
 
-    config.readout_amp = 0.0316
-    p = QMResonatorSpec(qmm, config, Navg=500,
-                        resonatorIFs=np.arange(202e6, 212e6, 0.05e6))
-    results = p.run(plot=True)
+    # config.readout_amp = 0.0316
+    # p = QMResonatorSpec(qmm, config, Navg=500,
+    #                     resonatorIFs=np.arange(202e6, 212e6, 0.05e6))
+    # results = p.run(plot=True)
+
+    # p = QMNoiseSpectrum(qmm, config, Nsamples=100000, wait_ns=16)
+    # results = p.run(plot=True)
+
+    # config.resonator_output_gain = 10
+    # p = QMResonatorSpec_P2(
+    #     qmm, config, Navg=100,
+    #     resonatorIFs=np.arange(203e6, 209e6, 0.1e6),
+    #     readout_amps=np.logspace(np.log10(0.000316), np.log10(0.0316), 21))
+    # results = p.run(plot=True)
+    # config.resonator_output_gain = -20
+
+    # config.saturation_amp = 0.1
+    # p = QMQubitSpec(qmm, config, Navg=1000,
+    #                 qubitIFs=np.arange(50e6, 450e6, 5e6))
+    # results = p.run(plot=True)
+
+    # p = QMQubitSpec_P2(
+    #     qmm, config, Navg=500, qubitIFs=np.arange(50e6, 450e6, 5e6),
+    #     drive_amps=np.logspace(np.log10(0.01), np.log10(0.316), 11))
+    # results = p.run(plot=True)
     
-    config.resonator_output_gain = 10
-    p = QMResonatorSpec_P2(
-        qmm, config, Navg=100,
-        resonatorIFs=np.arange(203e6, 209e6, 0.1e6),
-        readout_amps=np.logspace(np.log10(0.000316), np.log10(0.0316), 21))
-    results = p.run(plot=True)
-    config.resonator_output_gain = -20
+    p = QMPowerRabi_Gaussian(qmm, config, Navg=1e6, duration_ns=4, drive_amps=np.linspace(0.1, 1, 5))
+    p.simulate(20000, plot=True)
 
-    config.saturation_amp = 0.1
-    p = QMQubitSpec(qmm, config, Navg=1000,
-                    qubitIFs=np.arange(50e6, 450e6, 5e6))
-    results = p.run(plot=True)
+#%%
 
-    p = QMQubitSpec_P2(
-        qmm, config, Navg=500, qubitIFs=np.arange(50e6, 450e6, 5e6),
-        drive_amps=np.logspace(np.log10(0.01), np.log10(0.316), 11))
-    results = p.run(plot=True)
+if __name__ == '__main__':
+    fig, ax = plt.subplots()
+    p = QMNoiseSpectrum(qmm, config, Nsamples=50000, wait_ns=16)
+    p._initialize_liveplot(ax)
+    for i in range(1000):
+        results = p.run(plot=False)
+        p._update_liveplot(ax, p.last_job.result_handles)
+        ax.set_xlim(-110, 110)
+        mpl_pause(1)
