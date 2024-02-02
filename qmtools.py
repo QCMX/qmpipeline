@@ -167,7 +167,7 @@ class QMProgram (object):
 
         job = self.last_job = qm.execute(self.qmprog)
         resulthandles = job.result_handles
-        tstart = time.time()
+        tstart = self.last_tstart = time.time()
 
         if isinstance(plot, bool) and plot == True:
             fig, ax = plt.subplots(layout='constrained')
@@ -199,7 +199,7 @@ class QMProgram (object):
             print("Halting QuantumMachine job due to user interrupt")
             job.halt() # continue processing results
 
-        trun = time.time() - tstart
+        trun = self.last_trun = time.time() - tstart
         resulthandles.wait_for_all_values()
         print(f"Execution time: {trun:.1f}s, exit status: {job.status}")
         # if job.status != 'completed':
@@ -260,6 +260,11 @@ class QMProgram (object):
                 res['Z'] = (res['I'] + 1j * res['Q'])
             else:
                 res['Z'] = None
+        # Also save the time it took to run and start time (UTC timestamps)
+        if hasattr(self, 'last_tstart'):
+            res['job_starttime'] = self.last_tstart
+        if hasattr(self, 'last_trun'):
+            res['job_runtime'] = self.last_trun
         return self.params | res | {'config': self.config}
 
     def _initialize_liveplot(self, ax):
