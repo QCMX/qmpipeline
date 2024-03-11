@@ -719,11 +719,27 @@ class QMQubitSpec (QMProgram):
 
 class QMNoiseSpectrum (QMProgram):
     """Readout many times to later do FFT of it.
-    Does not use the cooldown time."""
+    Does not use the cooldown time.
 
-    def __init__(self, qmm, config, Nsamples, wait_ns=16):
+    Will record Nsamples at the resonator frequency. The spacing between samples
+    is the intrinsic program time plus wait_ns (minimum 16ns).
+
+    The sample spacing determines the maximum frequency (which usually is way
+    higher than of interest). The total length of the measurement T, determines
+    the frequency resolution 1/T. The number of samples reduces the noise, since
+    the FFT is basically averaging with a rotation.
+
+    Usually need large number of samples to have a low noise floor, but this
+    unnecessarily increases the saved output. Thus fcut_Hz can be used to save
+    only a subset of the FFT in -fcut_Hz to fcut_Hz.
+
+    If fcut_Hz is None the full raw data and FFT is saved, otherwise only the
+    FFT inside the cutoff.
+    """
+
+    def __init__(self, qmm, config, Nsamples, wait_ns=16, fcut_Hz=None):
         super().__init__(qmm, config)
-        self.params = {'Nsamples': Nsamples, 'wait_ns': wait_ns}
+        self.params = {'Nsamples': Nsamples, 'wait_ns': wait_ns, 'fcut_Hz': fcut_Hz}
 
     def _make_program(self):
         amp_scale = self.config['readout_amp'] / \
@@ -777,6 +793,16 @@ class QMNoiseSpectrum (QMProgram):
             t = res['I_timestamps'] * 1e-9
             dt = (np.max(t) - np.min(t)) / (t.size-1)
             res['fftfreq'] = np.fft.fftshift(np.fft.fftfreq(t.size, dt))
+
+            if self.params['fcut_Hz'] is not None:
+                fcut = self.params['fcut_Hz']
+                # cut FFT
+                mask = (res['fftfreq'] >= -fcut) & (res['fftfreq'] <= fcut)
+                res['fft'] = res['fft'][mask]
+                res['fftfreq'] = res['fftfreq'][mask]
+                # clean large data
+                del res['I'], res['Q'], res['Z'], res['I_timestamps']
+
         return res
 
     def _initialize_liveplot(self, ax):

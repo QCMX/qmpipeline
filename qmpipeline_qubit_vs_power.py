@@ -162,7 +162,7 @@ try:
 
         #######
         # Resonator noise
-        prog = progs[1] = qmtools.QMNoiseSpectrum(qmm, localconfig, Nsamples=100000)
+        prog = progs[1] = qmtools.QMNoiseSpectrum(qmm, localconfig, Nsamples=100000, fcut_Hz=20e3)
         results['resonator_noise'][i] = prog.run(plot=axs[1,1])
         axs[1,1].set_xlim(-210,210)
 
