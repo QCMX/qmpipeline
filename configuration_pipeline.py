@@ -26,7 +26,7 @@ PHASE_CORR = 1.6239384827049928e-06
 # Octave parameters
 resonator_output_gain = -20 # Octave RF1, range -20 to +20dB
 resonator_input_gain  = +10 # OPX IN, range -12 to +20dB
-qubit_output_gain     = 5 # Octave RF2, range -20 to +20dB
+qubit_output_gain     = -10 # Octave RF2, range -20 to +20dB
 # Qubit output gain is limited by 2*drive LO and LO + IF also going through
 # the cavity and saturating the readout.
 
@@ -44,7 +44,7 @@ qubitIF = -150e6
 
 # For resonator width 450kHz width, ie. t=2us lifetime
 # choose at least 6us=3t, ie. 1500cycles
-cooldown_clk = 6000 # 4ns cycles
+cooldown_clk = 4000 # 4ns cycles
 
 ## Readout pulse parameters
 const_len = 10000
