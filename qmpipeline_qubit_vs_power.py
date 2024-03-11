@@ -92,6 +92,8 @@ results = {
     'time_rabi': [None]*Ngate,
     'time_rabi_chevrons': [None]*Ngate,
     'power_rabi': [None]*Ngate,
+    'relaxation': [None]*Ngate,
+    'relaxation:hpr': [None]*Ngate,
 }
 resonator = np.full((Vgate.size, fr_range.size), np.nan+0j)
 frfit = np.full((Vgate.size, 4, 2), np.nan)
@@ -280,9 +282,27 @@ try:
 
         # Relaxation
 
+        # # somewhere to mixed state, see also drive_len_ns
+        # localconfig['saturation_amp'] = 0.07
+
+        # prog = progs[8] = qmtools.QMRelaxation(
+        #     qmm, localconfig, Navg=2e6, drive_len_ns=8,
+        #     max_delay_ns=80)
+        # results['relaxation'][i] = prog.run(plot=axs[0,4])
+
+        # # High power readout
+        # localconfig['short_readout_amp'] = 0.316
+
+        # prog = progs[9] = qmtools.QMRelaxation(
+        #     qmm, localconfig, Navg=1e6, drive_len_ns=8,
+        #     max_delay_ns=80)
+        # results['relaxation:hpr'][i] = prog.run(plot=axs[1,4])
         estimator.step(i)
 finally:
+    estimator.end()
     print("Saving data")
+    time.sleep(1) # Let user see the "saving" message to avoid KeyboardInterrupt
+
     if 'tof' not in globals():
         tof = None
     np.savez_compressed(
@@ -291,3 +311,4 @@ finally:
         tof_precalibration=tof,
         measurement_duration=estimator.elapsed())
     fig.savefig(fpath+'.png')
+    print("Data saved.")

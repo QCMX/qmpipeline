@@ -1553,14 +1553,130 @@ class QMPowerRabi_Gaussian (QMProgram):
         ax.relim(), ax.autoscale(), ax.autoscale_view()
         ax.set_title(self._figtitle((res['iteration'] or 0)+1), fontsize=8)
 
+
+class QMRelaxation (QMProgram):
+    """Uses short readout pulse and pi pulse amplitude."""
+
+    def __init__(self, qmm, config, Navg, drive_len_ns, max_delay_ns):
+        super().__init__(qmm, config)
+        self.params = {
+            'Navg': Navg,
+            'drive_len_ns': drive_len_ns,
+            'max_delay_ns': max_delay_ns}
+
+    def _make_program(self):
+        read_amp_scale = self.config['short_readout_amp'] / \
+            self.config['qmconfig']['waveforms']['short_readout_wf']['sample']
+
+        # minimum duration: 4cycles = 16ns
+        drivelen = self.params['drive_len_ns']
+        maxdelay = self.params['max_delay_ns']
+        wflen = int(np.ceil(drivelen/16)*16)
+        self.params['delay_ns'] = np.arange(0, maxdelay, 1)
+
+        assert maxdelay % 4 == 0
+
+        # Remember: baking modifies the qmconfig but this class instance uses its own deep-copy.
+        baked_saturation = []
+        for l in range(0, 4):
+            with baking(self.config['qmconfig'], padding_method='none') as bake:
+                wf = np.zeros(wflen)
+                wf[-drivelen-l:] = self.config['saturation_amp']
+                if l > 0:
+                    wf[-l:] = 0
+                bake.add_op('drive_%d'%l, 'qubit', [wf, [0]*wflen])
+                bake.play('drive_%d'%l, 'qubit')
+            baked_saturation.append(bake)
+
+        with qua.program() as prog:
+            n = qua.declare(int)
+            t4 = qua.declare(int)
+            I = qua.declare(qua.fixed)
+            Q = qua.declare(qua.fixed)
+            n_st = qua.declare_stream()
+            I_st = qua.declare_stream()
+            Q_st = qua.declare_stream()
+            rand = qua.lib.Random()
+
+            qua.update_frequency('resonator', self.config['resonatorIF'])
+            qua.update_frequency('qubit', self.config['qubitIF'])
+            with qua.for_(n, 0, n < self.params['Navg'], n + 1):
+                qua.save(n, n_st)
+
+                # need extra code for t4 < 4 because of wait statement specifics
+                for j in range(4):
+                    for i in range(4):
+                        qua.align()
+                        qua.wait(12, 'qubit')
+                        baked_saturation[i].run()
+                        qua.wait(12+wflen//4 + j, 'resonator')
+                        qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator', None,
+                            qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
+                            qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
+                        qua.save(I, I_st)
+                        qua.save(Q, Q_st)
+                        qua.wait(self.config['cooldown_clk'], 'resonator')
+                        qua.wait(rand.rand_int(50)+4, 'resonator')
+
+                with qua.for_(t4, 4, t4 < maxdelay//4, t4 + 1):
+                    for i in range(4):
+                        qua.align()
+                        qua.wait(12, 'qubit')
+                        baked_saturation[i].run()
+                        qua.wait(12+wflen//4, 'resonator')
+                        qua.wait(t4, 'resonator')
+                        qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator', None,
+                            qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
+                            qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
+                        qua.save(I, I_st)
+                        qua.save(Q, Q_st)
+                        qua.wait(self.config['cooldown_clk'], 'resonator')
+                        qua.wait(rand.rand_int(50)+4, 'resonator')
+
+            with qua.stream_processing():
+                n_st.save('iteration')
+                I_st.buffer(maxdelay).average().save('I')
+                Q_st.buffer(maxdelay).average().save('Q')
+
+        self.qmprog = prog
+        return prog
+
+    def _figtitle(self, Navg):
+        readoutpower = opx_amp2pow(self.config['short_readout_amp'])
+        drivepower = opx_amp2pow(self.config['saturation_amp'])
+        return (
+            f"Relaxation,  Navg {Navg:.2e}\n"
+            f"resonator {self.config['resonatorLO']/1e9:.3f}GHz{self.config['resonatorIF']/1e6:+.3f}MHz\n"
+            f"qubit {self.config['qubitLO']/1e9:.3f}GHz{self.config['qubitIF']/1e6:+.0f}MHz\n"
+            f"{self.config['short_readout_len']:.0f}ns readout at {readoutpower:.1f}dBm{self.config['resonator_output_gain']:+.1f}dB\n"
+            f"{self.params['drive_len_ns']:.0f}ns drive at {drivepower:.1f}dBm{self.config['qubit_output_gain']:+.1f}dB")
+
+    def _initialize_liveplot(self, ax):
+        delays = self.params['delay_ns']
+        self.line, = ax.plot(delays, np.full(len(delays), np.nan))
+        ax.set_xlabel("measurement delay / ns")
+        ax.set_ylabel("arg S")
+        ax.set_title(self._figtitle(self.params['Navg']), fontsize=8)
+        self.ax = ax
+
+    def _update_liveplot(self, ax, resulthandles):
+        res = self._retrieve_results(resulthandles)
+        if res['Z'] is None:
+            return
+        self.line.set_ydata(np.unwrap(np.angle(res['Z'])))
+        ax.relim(), ax.autoscale(), ax.autoscale_view()
+        ax.set_title(self._figtitle((res['iteration'] or 0)+1), fontsize=8)
+
+
 # %%
 
-if __name__ == '__main__':
-    import importlib
-    import configuration as config
-    importlib.reload(config)
+# if __name__ == '__main__':
+#     import importlib
+#     import configuration as config
+#     importlib.reload(config)
 
-    qmm = qminit.connect()
+#     qmm = qminit.connect()
+
     # QMMixerCalibration(qmm, config).run()
     # p = QMTimeOfFlight(qmm, config, Navg=100)
     # results = p.run()
@@ -1592,17 +1708,20 @@ if __name__ == '__main__':
     #     drive_amps=np.logspace(np.log10(0.01), np.log10(0.316), 11))
     # results = p.run(plot=True)
     
-    p = QMPowerRabi_Gaussian(qmm, config, Navg=1e6, duration_ns=4, drive_amps=np.linspace(0.1, 1, 5))
-    p.simulate(20000, plot=True)
+    # p = QMPowerRabi_Gaussian(qmm, config, Navg=1e6, duration_ns=4, drive_amps=np.linspace(0.1, 1, 5))
+    # p.simulate(20000, plot=True)
+
+    # p = QMRelaxation(qmm, config, Navg=100, drive_len_ns=8, max_delay_ns=52)
+    # p.simulate(200000, plot=True)
 
 #%%
 
-if __name__ == '__main__':
-    fig, ax = plt.subplots()
-    p = QMNoiseSpectrum(qmm, config, Nsamples=50000, wait_ns=16)
-    p._initialize_liveplot(ax)
-    for i in range(1000):
-        results = p.run(plot=False)
-        p._update_liveplot(ax, p.last_job.result_handles)
-        ax.set_xlim(-110, 110)
-        mpl_pause(1)
+# if __name__ == '__main__':
+#     fig, ax = plt.subplots()
+#     p = QMNoiseSpectrum(qmm, config, Nsamples=50000, wait_ns=16)
+#     p._initialize_liveplot(ax)
+#     for i in range(1000):
+#         results = p.run(plot=False)
+#         p._update_liveplot(ax, p.last_job.result_handles)
+#         ax.set_xlim(-110, 110)
+#         mpl_pause(1)
