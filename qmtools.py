@@ -1581,7 +1581,7 @@ class QMPowerRabi_Gaussian (QMProgram):
 
 
 class QMRelaxation (QMProgram):
-    """Uses short readout pulse and saturation pulse amplitude. (TODO: change to pi pulse)"""
+    """Uses short readout pulse and pi pulse amplitude."""
 
     def __init__(self, qmm, config, Navg, drive_len_ns, max_delay_ns):
         super().__init__(qmm, config)
@@ -1607,7 +1607,7 @@ class QMRelaxation (QMProgram):
         for l in range(0, 4):
             with baking(self.config['qmconfig'], padding_method='none') as bake:
                 wf = np.zeros(wflen)
-                wf[-drivelen-l:] = self.config['saturation_amp']
+                wf[-drivelen-l:] = self.config['pi_amp']
                 if l > 0:
                     wf[-l:] = 0
                 bake.add_op('drive_%d'%l, 'qubit', [wf, [0]*wflen])
@@ -1669,7 +1669,7 @@ class QMRelaxation (QMProgram):
 
     def _figtitle(self, Navg):
         readoutpower = opx_amp2pow(self.config['short_readout_amp'])
-        drivepower = opx_amp2pow(self.config['saturation_amp'])
+        drivepower = opx_amp2pow(self.config['pi_amp'])
         return (
             f"Relaxation,  Navg {Navg:.2e}\n"
             f"resonator {self.config['resonatorLO']/1e9:.3f}GHz{self.config['resonatorIF']/1e6:+.3f}MHz\n"
@@ -1694,14 +1694,185 @@ class QMRelaxation (QMProgram):
         ax.set_title(self._figtitle((res['iteration'] or 0)+1), fontsize=8)
 
 
+class QMRamsey (QMProgram):
+    """Ramsey sequence: pi/2 pulse, wait, pi/2 pulse, readout.
+
+    Uses short readout pulse and pi pulse amplitude.
+
+    Since we cannot store an arbitrary number of waveforms we need to bake
+    waveforms that can be combined with the qua.wait of multiples of 4ns cycles.
+    The second drive pulse needs to be right aligned in a cycle to be followed
+    directly by a readout pulse.
+
+    Wait time long enough:
+        driveA, then 0 to 3ns wait
+        play wait of multiple 4ns cycles
+        some ns wait for full 16ns pulse, then driveB right
+
+    For short waits we need to bake the whole pulse sequence into one waveform
+    because the qua.wait doesn't have enough resolution:
+        driveA, then wait, drive B
+
+    See _make_program implementation for details.
+    """
+
+    def __init__(self, qmm, config, Navg, drive_len_ns, max_delay_ns):
+        super().__init__(qmm, config)
+        self.params = {
+            'Navg': Navg,
+            'drive_len_ns': drive_len_ns,
+            'max_delay_ns': max_delay_ns}
+
+    def _make_program(self):
+        read_amp_scale = self.config['short_readout_amp'] / \
+            self.config['qmconfig']['waveforms']['short_readout_wf']['sample']
+
+        # minimum duration: 4cycles = 16ns
+        drivelen = self.params['drive_len_ns']
+        maxdelay = self.params['max_delay_ns']
+        self.params['delay_ns'] = np.arange(0, maxdelay, 1)
+
+        assert drivelen % 4 == 0 # makes everything so much easier
+        assert maxdelay % 4 == 0
+
+        ## Waveforms for long wait case:
+        # length of first drive wf including variable wait (1 to 4ns)
+        driveAlen = max(16, int(np.ceil((drivelen+4)/4)*4))
+        # length of second drive wf, right aligned, multiple of 4ns, minimum 16ns, also initial wait minimum of 16ns
+        driveBlen = max(16, int(np.ceil(drivelen/4)*4))
+        waitB = driveBlen - drivelen # wait included in driveB
+        assert waitB % 4 == 0 # True since drivelen % 4 == 0
+
+        # Delimiter between cases: if wait >= waitB+16 we use two waveforms with >=16ns qua.wait inbetween.
+
+        # wf in case of short wait case:
+        # two pi/2 pulses and up to waitB+16ns in between
+        shortwflen = max(16, int(np.ceil((2*drivelen+waitB+16)/4)*4))
+
+        # max cycles to wait in qua.wait, (maxdelay-waitB guaranteed multiple of 4ns)
+        maxwaitcycles = (maxdelay - waitB) // 4
+
+        # Remember: baking modifies the qmconfig but this class instance uses its own deep-copy.
+        # start pulse driveA, right aligned with 0-3ns wait
+        baked_driveA = []
+        for l in range(0, 4):
+            with baking(self.config['qmconfig'], padding_method='none') as bake:
+                wf = np.zeros(driveAlen)
+                wf[-driveAlen-l:] = self.config['pi_amp']
+                if l > 0:
+                    wf[-l:] = 0
+                bake.add_op('driveA_%d'%l, 'qubit', [wf, [0]*driveAlen])
+                bake.play('driveA_%d'%l, 'qubit')
+            baked_driveA.append(bake)
+        # end pulse driveB, right aligned
+        with baking(self.config['qmconfig'], padding_method='none') as baked_driveB:
+            wf = np.zeros(driveBlen)
+            wf[-drivelen:] = self.config['pi_amp']
+            baked_driveB.add_op('driveB', 'qubit', [wf, [0]*driveBlen])
+            baked_driveB.play('driveB', 'qubit')
+
+        ## Waveforms for short wait case, all pulses baked into one wf:
+        baked_driveshort = []
+        for l in range(0, waitB+16):
+            with baking(self.config['qmconfig'], padding_method='none') as bake:
+                wf = np.zeros(shortwflen)
+                wf[-2*drivelen-l:] = 1
+                wf[-drivelen-l:] = 0
+                wf[-drivelen:] = 1
+                bake.add_op('driveshort_%d'%l, 'qubit', [wf*self.config['pi_amp'], [0]*shortwflen])
+                bake.play('driveshort_%d'%l, 'qubit')
+            baked_driveshort.append(bake)
+
+        with qua.program() as prog:
+            n = qua.declare(int)
+            t4 = qua.declare(int)
+            I = qua.declare(qua.fixed)
+            Q = qua.declare(qua.fixed)
+            n_st = qua.declare_stream()
+            I_st = qua.declare_stream()
+            Q_st = qua.declare_stream()
+            rand = qua.lib.Random()
+
+            qua.update_frequency('resonator', self.config['resonatorIF'])
+            qua.update_frequency('qubit', self.config['qubitIF'])
+            with qua.for_(n, 0, n < self.params['Navg'], n + 1):
+                qua.save(n, n_st)
+
+                # short case, not including wait==waitB+16
+                for j in range(waitB+16):
+                    qua.align()
+                    qua.wait(12, 'qubit')
+                    baked_driveshort[j].run()
+                    qua.wait(12+shortwflen//4, 'resonator')
+                    qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator', None,
+                        qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
+                        qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
+                    qua.save(I, I_st)
+                    qua.save(Q, Q_st)
+                    qua.wait(self.config['cooldown_clk'], 'resonator')
+                    qua.wait(rand.rand_int(50)+4, 'resonator')
+
+                with qua.for_(t4, 4, t4 < maxwaitcycles, t4 + 1):
+                    for i in range(4):
+                        qua.align()
+                        # qubit pulses
+                        qua.wait(12, 'qubit')
+                        baked_driveA[i].run()
+                        qua.wait(t4, 'qubit')
+                        baked_driveB.run()
+                        # readout
+                        qua.wait(12+driveAlen//4+driveBlen//4, 'resonator')
+                        qua.wait(t4, 'resonator')
+                        qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator', None,
+                            qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
+                            qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
+                        qua.save(I, I_st)
+                        qua.save(Q, Q_st)
+                        qua.wait(self.config['cooldown_clk'], 'resonator')
+                        qua.wait(rand.rand_int(50)+4, 'resonator')
+
+            with qua.stream_processing():
+                n_st.save('iteration')
+                I_st.buffer(maxdelay).average().save('I')
+                Q_st.buffer(maxdelay).average().save('Q')
+
+        self.qmprog = prog
+        return prog
+
+    def _figtitle(self, Navg):
+        readoutpower = opx_amp2pow(self.config['short_readout_amp'])
+        drivepower = opx_amp2pow(self.config['pi_amp'])
+        return (
+            f"Ramsey,  Navg {Navg:.2e}\n"
+            f"resonator {self.config['resonatorLO']/1e9:.3f}GHz{self.config['resonatorIF']/1e6:+.3f}MHz\n"
+            f"qubit {self.config['qubitLO']/1e9:.3f}GHz{self.config['qubitIF']/1e6:+.0f}MHz\n"
+            f"{self.config['short_readout_len']:.0f}ns readout at {readoutpower:.1f}dBm{self.config['resonator_output_gain']:+.1f}dB\n"
+            f"{self.params['drive_len_ns']:.0f}ns drive at {drivepower:.1f}dBm{self.config['qubit_output_gain']:+.1f}dB")
+
+    def _initialize_liveplot(self, ax):
+        delays = self.params['delay_ns']
+        self.line, = ax.plot(delays, np.full(len(delays), np.nan))
+        ax.set_xlabel("pulse delay / ns")
+        ax.set_ylabel("arg S")
+        ax.set_title(self._figtitle(self.params['Navg']), fontsize=8)
+        self.ax = ax
+
+    def _update_liveplot(self, ax, resulthandles):
+        res = self._retrieve_results(resulthandles)
+        if res['Z'] is None:
+            return
+        self.line.set_ydata(np.unwrap(np.angle(res['Z'])))
+        ax.relim(), ax.autoscale(), ax.autoscale_view()
+        ax.set_title(self._figtitle((res['iteration'] or 0)+1), fontsize=8)
+
 # %%
 
-# if __name__ == '__main__':
-#     import importlib
-#     import configuration as config
-#     importlib.reload(config)
+if __name__ == '__main__':
+    import importlib
+    import configuration as config
+    importlib.reload(config)
 
-#     qmm = qminit.connect()
+    qmm = qminit.connect()
 
     # QMMixerCalibration(qmm, config).run()
     # p = QMTimeOfFlight(qmm, config, Navg=100)
@@ -1738,6 +1909,9 @@ class QMRelaxation (QMProgram):
     # p.simulate(20000, plot=True)
 
     # p = QMRelaxation(qmm, config, Navg=100, drive_len_ns=8, max_delay_ns=52)
+    # p.simulate(200000, plot=True)
+
+    # p = QMRamsey(qmm, config, Navg=100, drive_len_ns=8, max_delay_ns=52)
     # p.simulate(200000, plot=True)
 
 #%%

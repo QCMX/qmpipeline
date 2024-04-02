@@ -42,7 +42,7 @@ filename = '{datetime}_qmpipeline'
 fpath = data_path(filename, datesuffix='_qm')
 Vgate = np.concatenate([np.linspace(-6.775, -6.815, 201)])
 Vgate = np.concatenate([np.linspace(-6.8, -6.82, 201)])
-Vgate = np.array([-6.8])
+Vgate = np.array([-6.799])
 Vstep = np.mean(np.abs(np.diff(Vgate)))
 print(f"Vgate measurement step: {Vstep*1e6:.1f}uV avg")
 Ngate = Vgate.size
@@ -110,6 +110,8 @@ results = {
     'power_rabi:gaussian_4ns': [None]*Ngate,
     'relaxation': [None]*Ngate,
     'relaxation:hpr': [None]*Ngate,
+    'ramsey:on_resonance': [None]*Ngate,
+    'ramsey:detuned': [None]*Ngate,
 }
 resonator = np.full((Vgate.size, fr_range.size), np.nan+0j)
 frfit = np.full((Vgate.size, 4, 2), np.nan)
@@ -351,7 +353,7 @@ try:
         axs[0,3].axhline(localconfig['qubitIF']/1e6, color='r', linestyle='--', linewidth=0.8, zorder=100)
 
         prog = progs[6] = qmtools.QMTimeRabiChevrons(
-            qmm, localconfig, Navg=5e4,
+            qmm, localconfig, Navg=5e3,
             qubitIFs=time_rabi_IFs,
             max_duration_ns=time_rabi_max_duration,
             drive_read_overlap_cycles=0)
@@ -374,17 +376,17 @@ try:
         #######
         # Power Rabi
 
-        # Low power readout
-        localconfig['short_readout_amp'] = 0.056 # baseconfig['short_readout_amp'] # restore
+        # # Low power readout
+        # localconfig['short_readout_amp'] = 0.056 # baseconfig['short_readout_amp'] # restore
 
         # # Note: max CW input to roomT amplifier is +4dBm
         # localconfig['qubit_output_gain'] = -3
 
-        prog = progs[7] = qmtools.QMPowerRabi(
-            qmm, localconfig, Navg=5e4, duration_ns=8,
-            drive_amps=np.linspace(0, 0.316 if highfq else 0.316, 41),
-            drive_read_overlap_cycles=0)
-        results['power_rabi:square_8ns'][i] = prog.run(plot=axs[1,3])
+        # prog = progs[7] = qmtools.QMPowerRabi(
+        #     qmm, localconfig, Navg=5e4, duration_ns=8,
+        #     drive_amps=np.linspace(0, 0.316 if highfq else 0.316, 41),
+        #     drive_read_overlap_cycles=0)
+        # results['power_rabi:square_8ns'][i] = prog.run(plot=axs[1,3])
 
         # prog = progs[7] = qmtools.QMPowerRabi_Gaussian(
         #     qmm, localconfig, Navg=1e5, duration_ns=8,
@@ -409,25 +411,40 @@ try:
 
         #######
         # Relaxation
+        # Uses pi pulse amplitude from config
 
-        # somewhere to mixed state, see also drive_len_ns
-        localconfig['saturation_amp'] = 0.07
+        # somewhere to superposition state, see also drive_len_ns
+        localconfig['pi_amp'] = 0.0275
 
         prog = progs[8] = qmtools.QMRelaxation(
             qmm, localconfig, Navg=1e5, drive_len_ns=8,
-            max_delay_ns=60)
+            max_delay_ns=80)
         results['relaxation'][i] = prog.run(plot=axs[0,4])
 
         # # High power readout
         # localconfig['short_readout_amp'] = 0.316
 
-        # prog = progs[9] = qmtools.QMRelaxation(
+        # prog = progs[8] = qmtools.QMRelaxation(
         #     qmm, localconfig, Navg=1e6, drive_len_ns=8,
         #     max_delay_ns=80)
         # results['relaxation:hpr'][i] = prog.run(plot=axs[1,4])
 
         #######
-        # TODO Ramsey
+        # Ramsey
+        # Uses pi pulse amplitude from config
+
+        prog = progs[9] = qmtools.QMRamsey(
+            qmm, localconfig, Navg=1e5, drive_len_ns=8,
+            max_delay_ns=60)
+        results['ramsey:on_resonance'][i] = prog.run(plot=axs[1,4])
+
+        # detune from qubit
+        localconfig['qubitIF'] = fq - qubitLO + 50e6
+
+        prog = progs[9] = qmtools.QMRamsey(
+            qmm, localconfig, Navg=1e5, drive_len_ns=8,
+            max_delay_ns=60)
+        results['ramsey:detuned'][i] = prog.run(plot=axs[1,4])
 
         estimator.step(i)
 finally:
