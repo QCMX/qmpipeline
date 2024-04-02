@@ -1581,7 +1581,7 @@ class QMPowerRabi_Gaussian (QMProgram):
 
 
 class QMRelaxation (QMProgram):
-    """Uses short readout pulse and pi pulse amplitude."""
+    """Uses short readout pulse and saturation pulse amplitude. (TODO: change to pi pulse)"""
 
     def __init__(self, qmm, config, Navg, drive_len_ns, max_delay_ns):
         super().__init__(qmm, config)

@@ -40,9 +40,9 @@ importlib.reload(qminit)
 
 filename = '{datetime}_qmpipeline'
 fpath = data_path(filename, datesuffix='_qm')
-Vgate = np.concatenate([np.linspace(-5.2, -5.3, 201)])
-Vgate = np.concatenate([np.linspace(-5.26, -5.264, 51)])
-#Vgate = np.array([-5.2876])
+Vgate = np.concatenate([np.linspace(-6.775, -6.815, 201)])
+Vgate = np.concatenate([np.linspace(-6.8, -6.82, 201)])
+Vgate = np.array([-6.8])
 Vstep = np.mean(np.abs(np.diff(Vgate)))
 print(f"Vgate measurement step: {Vstep*1e6:.1f}uV avg")
 Ngate = Vgate.size
@@ -61,9 +61,9 @@ time_rabi_IFs = np.arange(-400e6, 50e6, 20e6)
 time_rabi_max_duration = 72 # ns
 
 
-Vhyst = -5.20
-print(f"Gate hysteresis sweep ({abs(gate.get_voltage()-Vhyst)/GATERAMP_STEP*GATERAMP_STEPTIME/60:.1f}min)")
-gate.ramp_voltage(Vhyst, 4*GATERAMP_STEP, GATERAMP_STEPTIME)
+# Vhyst = -5.20
+# print(f"Gate hysteresis sweep ({abs(gate.get_voltage()-Vhyst)/GATERAMP_STEP*GATERAMP_STEPTIME/60:.1f}min)")
+# gate.ramp_voltage(Vhyst, 4*GATERAMP_STEP, GATERAMP_STEPTIME)
 
 
 print(f"Setting gate ({abs(gate.get_voltage()-Vgate[0])/GATERAMP_STEP*GATERAMP_STEPTIME/60:.1f}min)")
@@ -105,6 +105,7 @@ results = {
     'time_rabi_chevrons': [None]*Ngate,
     'time_rabi_chevrons:hpr': [None]*Ngate,
     'power_rabi:square_8ns': [None]*Ngate,
+    'power_rabi:square_8ns_hpr': [None]*Ngate,
     'power_rabi:gaussian_8ns': [None]*Ngate,
     'power_rabi:gaussian_4ns': [None]*Ngate,
     'relaxation': [None]*Ngate,
@@ -171,13 +172,13 @@ try:
         # Turn up octave output and not OPX
         localconfig['resonator_output_gain'] = +10
 
-        axs[0,1].axhline(
-            qmtools.opx_amp2pow(baseconfig['readout_amp'], baseconfig['resonator_output_gain']),
-            color='red', linestyle='--', linewidth=0.8, zorder=100)
-        axs[0,1].plot(
-            [localconfig['resonatorIF']/1e6],
-            [qmtools.opx_amp2pow(baseconfig['short_readout_amp'], baseconfig['resonator_output_gain'])],
-            '.', color='r')
+        # axs[0,1].axhline(
+        #     qmtools.opx_amp2pow(baseconfig['readout_amp'], baseconfig['resonator_output_gain']),
+        #     color='red', linestyle='--', linewidth=0.8, zorder=100)
+        # axs[0,1].plot(
+        #     [localconfig['resonatorIF']/1e6],
+        #     [qmtools.opx_amp2pow(baseconfig['short_readout_amp'], baseconfig['resonator_output_gain'])],
+        #     '.', color='r')
         prog = progs[2] = qmtools.QMResonatorSpec_P2(
             qmm, localconfig, Navg=1000,
             resonatorIFs=np.arange(204e6, 209e6, 0.1e6),
@@ -211,7 +212,7 @@ try:
 
 
         # high fq, fq = 2.5GHz, need lower power
-        highfq = localconfig['resonatorIF'] > 206.8e6
+        highfq = localconfig['resonatorIF'] > 206.5e6
 
 
         #######
@@ -257,8 +258,9 @@ try:
                 print("  fq on parasitic mode, keep initial estimate")
                 fq = fqest
             else:
-                print("f  fq estimated on parasitic mode, move 150MHz above")
-                fq += 150e6
+                #print("f  fq estimated on parasitic mode, move 150MHz above")
+                #fq += 150e6
+                pass
         if fqest > 2.8e9:
             print("  fq estimated large close to 3.4GHz parasitic mode. Keep initial guess")
             fq = fqest
@@ -312,7 +314,7 @@ try:
         if highfq:
             #localconfig['cooldown_clk'] = 25000 # 100us
             localconfig['cooldown_clk'] = 12500 # 50us
-            localconfig['saturation_amp'] = 0.056
+            localconfig['saturation_amp'] = 0.0316
         else:
             # default cooldown = 4000 # 16us
             localconfig['saturation_amp'] = 0.1
@@ -367,25 +369,38 @@ try:
         #     drive_read_overlap_cycles=0)
         # results['time_rabi_chevrons'][i] = prog.run(plot=axs[0,3])
 
+        # TODO fit chevrons to get good fq and drive power estimate
+
         #######
         # Power Rabi
 
-        # # Low power readout
-        # localconfig['short_readout_amp'] = 0.0316 # baseconfig['short_readout_amp'] # restore
+        # Low power readout
+        localconfig['short_readout_amp'] = 0.056 # baseconfig['short_readout_amp'] # restore
 
         # # Note: max CW input to roomT amplifier is +4dBm
         # localconfig['qubit_output_gain'] = -3
 
-        # prog = progs[7] = qmtools.QMPowerRabi(
-        #     qmm, localconfig, Navg=2e6, duration_ns=8,
-        #     drive_amps=np.linspace(0, 0.316, 41),
-        #     drive_read_overlap_cycles=0)
-        # results['power_rabi:square_8ns'][i] = prog.run(plot=axs[1,3])
+        prog = progs[7] = qmtools.QMPowerRabi(
+            qmm, localconfig, Navg=5e4, duration_ns=8,
+            drive_amps=np.linspace(0, 0.316 if highfq else 0.316, 41),
+            drive_read_overlap_cycles=0)
+        results['power_rabi:square_8ns'][i] = prog.run(plot=axs[1,3])
 
         # prog = progs[7] = qmtools.QMPowerRabi_Gaussian(
-        #     qmm, localconfig, Navg=5e6, duration_ns=8,
-        #     drive_amps=np.linspace(0, 0.316, 41))
+        #     qmm, localconfig, Navg=1e5, duration_ns=8,
+        #     drive_amps=np.linspace(0, 0.316 if highfq else 0.316, 41))
         # results['power_rabi:gaussian_8ns'][i] = prog.run(plot=axs[1,3])
+
+        # High power readout
+        # Gives wrong results
+
+        localconfig['short_readout_amp'] = 0.316
+
+        prog = progs[7] = qmtools.QMPowerRabi(
+            qmm, localconfig, Navg=1e5, duration_ns=8,
+            drive_amps=np.linspace(0, 0.316 if highfq else 0.316, 41),
+            drive_read_overlap_cycles=0)
+        results['power_rabi:square_8ns_hpr'][i] = prog.run(plot=axs[1,3])
 
         # prog = progs[7] = qmtools.QMPowerRabi_Gaussian(
         #     qmm, localconfig, Navg=5e6, duration_ns=4,
@@ -395,13 +410,13 @@ try:
         #######
         # Relaxation
 
-        # # somewhere to mixed state, see also drive_len_ns
-        # localconfig['saturation_amp'] = 0.07
+        # somewhere to mixed state, see also drive_len_ns
+        localconfig['saturation_amp'] = 0.07
 
-        # prog = progs[8] = qmtools.QMRelaxation(
-        #     qmm, localconfig, Navg=2e6, drive_len_ns=8,
-        #     max_delay_ns=80)
-        # results['relaxation'][i] = prog.run(plot=axs[0,4])
+        prog = progs[8] = qmtools.QMRelaxation(
+            qmm, localconfig, Navg=1e5, drive_len_ns=8,
+            max_delay_ns=60)
+        results['relaxation'][i] = prog.run(plot=axs[0,4])
 
         # # High power readout
         # localconfig['short_readout_amp'] = 0.316
