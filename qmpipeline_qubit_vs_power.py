@@ -65,6 +65,12 @@ time_rabi_max_duration = 72 # ns
 # print(f"Gate hysteresis sweep ({abs(gate.get_voltage()-Vhyst)/GATERAMP_STEP*GATERAMP_STEPTIME/60:.1f}min)")
 # gate.ramp_voltage(Vhyst, 4*GATERAMP_STEP, GATERAMP_STEPTIME)
 
+try:
+    if vna.rf_output():
+        print("Turning off VNA RF OUTPUT")
+        vna.rf_output(False)
+except:
+    pass
 
 print(f"Setting gate ({abs(gate.get_voltage()-Vgate[0])/GATERAMP_STEP*GATERAMP_STEPTIME/60:.1f}min)")
 gate.ramp_voltage(Vgate[0], GATERAMP_STEP, GATERAMP_STEPTIME)
