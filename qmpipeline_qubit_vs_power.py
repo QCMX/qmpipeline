@@ -41,8 +41,8 @@ importlib.reload(qminit)
 filename = '{datetime}_qmpipeline'
 fpath = data_path(filename, datesuffix='_qm')
 Vgate = np.concatenate([np.linspace(-6.775, -6.815, 201)])
-Vgate = np.concatenate([np.linspace(-6.8, -6.82, 201)])
-Vgate = np.array([-6.799])
+Vgate = np.concatenate([np.linspace(-6.795, -6.805, 101)])
+Vgate = np.array([-6.7793])
 Vstep = np.mean(np.abs(np.diff(Vgate)))
 print(f"Vgate measurement step: {Vstep*1e6:.1f}uV avg")
 Ngate = Vgate.size
@@ -112,12 +112,14 @@ results = {
     'time_rabi_chevrons:hpr': [None]*Ngate,
     'power_rabi:square_8ns': [None]*Ngate,
     'power_rabi:square_8ns_hpr': [None]*Ngate,
+    'power_rabi:square_8ns_hpr_fit': [None]*Ngate,
     'power_rabi:gaussian_8ns': [None]*Ngate,
     'power_rabi:gaussian_4ns': [None]*Ngate,
     'relaxation': [None]*Ngate,
     'relaxation:hpr': [None]*Ngate,
     'ramsey:on_resonance': [None]*Ngate,
     'ramsey:detuned': [None]*Ngate,
+    'ramsey:detuned_repetition': [None]*Ngate,
 }
 resonator = np.full((Vgate.size, fr_range.size), np.nan+0j)
 frfit = np.full((Vgate.size, 4, 2), np.nan)
@@ -353,17 +355,17 @@ try:
         # Time Rabi Chevrons
         # (same plot as Time Rabi, need to decide or move somewhere else)
 
-        # High power readout
-        localconfig['short_readout_amp'] = 0.316
+        # # High power readout
+        # localconfig['short_readout_amp'] = 0.316
 
-        axs[0,3].axhline(localconfig['qubitIF']/1e6, color='r', linestyle='--', linewidth=0.8, zorder=100)
+        # axs[0,3].axhline(localconfig['qubitIF']/1e6, color='r', linestyle='--', linewidth=0.8, zorder=100)
 
-        prog = progs[6] = qmtools.QMTimeRabiChevrons(
-            qmm, localconfig, Navg=5e3,
-            qubitIFs=time_rabi_IFs,
-            max_duration_ns=time_rabi_max_duration,
-            drive_read_overlap_cycles=0)
-        results['time_rabi_chevrons:hpr'][i] = prog.run(plot=axs[0,3])
+        # prog = progs[6] = qmtools.QMTimeRabiChevrons(
+        #     qmm, localconfig, Navg=2e4,
+        #     qubitIFs=time_rabi_IFs,
+        #     max_duration_ns=time_rabi_max_duration,
+        #     drive_read_overlap_cycles=0)
+        # results['time_rabi_chevrons:hpr'][i] = prog.run(plot=axs[0,3])
 
         # prog.clear_liveplot()
 
@@ -428,11 +430,30 @@ try:
         # results['power_rabi:gaussian_4ns'][i] = prog.run(plot=axs[1,3])
 
         #######
-        # Relaxation
+        # Ramsey
         # Uses pi pulse amplitude from config
 
-        # somewhere to superposition state, see also drive_len_ns
-        localconfig['pi_amp'] = 0.0275
+        prog = progs[9] = qmtools.QMRamsey(
+            qmm, localconfig, Navg=5e5, drive_len_ns=8,
+            max_delay_ns=60)
+        results['ramsey:on_resonance'][i] = prog.run(plot=axs[1,4])
+
+        # detune from qubit
+        localconfig['qubitIF'] = fq - qubitLO + 100e6
+
+        prog = progs[9] = qmtools.QMRamsey(
+            qmm, localconfig, Navg=5e5, drive_len_ns=8,
+            max_delay_ns=60)
+        results['ramsey:detuned'][i] = prog.run(plot=axs[1,4])
+
+        prog = progs[9] = qmtools.QMRamsey(
+            qmm, localconfig, Navg=5e5, drive_len_ns=8,
+            max_delay_ns=60)
+        results['ramsey:detuned_repetition'][i] = prog.run(plot=axs[1,4])
+
+        #######
+        # Relaxation
+        # Uses pi pulse amplitude from config
 
         prog = progs[8] = qmtools.QMRelaxation(
             qmm, localconfig, Navg=1e5, drive_len_ns=8,
@@ -446,23 +467,6 @@ try:
         #     qmm, localconfig, Navg=1e6, drive_len_ns=8,
         #     max_delay_ns=80)
         # results['relaxation:hpr'][i] = prog.run(plot=axs[1,4])
-
-        #######
-        # Ramsey
-        # Uses pi pulse amplitude from config
-
-        prog = progs[9] = qmtools.QMRamsey(
-            qmm, localconfig, Navg=1e5, drive_len_ns=8,
-            max_delay_ns=60)
-        results['ramsey:on_resonance'][i] = prog.run(plot=axs[1,4])
-
-        # detune from qubit
-        localconfig['qubitIF'] = fq - qubitLO + 50e6
-
-        prog = progs[9] = qmtools.QMRamsey(
-            qmm, localconfig, Navg=1e5, drive_len_ns=8,
-            max_delay_ns=60)
-        results['ramsey:detuned'][i] = prog.run(plot=axs[1,4])
 
         estimator.step(i)
 finally:
