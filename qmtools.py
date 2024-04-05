@@ -1453,6 +1453,48 @@ class QMPowerRabi (QMProgram):
         self.qmprog = prog
         return prog
 
+    def cosine(amp, period, a, bkg_slope, bkg_offs):
+        """Cosine function with background offset and slope to use for fitting."""
+        return a * np.cos(2*np.pi * amp / period) + bkg_slope * amp + bkg_offs
+
+    def fit_cosine(
+            self, result=None, ax=None, plotp0=False,
+            pltkw={'color': 'k', 'linewidth': 1}, printinfo=True):
+        """Fit slanted sine shape to data.
+
+        Returns tuple of (optimal, uncertainty), each being an array of
+        period, cosine amplitude, background slant, background offset
+        """
+        res = self._retrieve_results() if result is None else result
+        amps = res['drive_amps']
+        func = QMPowerRabi.cosine
+        argZ = np.unwrap(np.angle(res['Z']))
+        maxmin = np.max(argZ)-np.min(argZ)
+        p0 = self.last_p0 = [
+            0.05, # period
+            maxmin/2.5, # amplitude
+            0, # bkg slant
+            np.mean(argZ) # bkg offset
+        ]
+        bounds = (
+            [0, 0, -np.inf, np.min(argZ)],
+            [np.max(amps)*2, maxmin/2, np.inf, np.max(argZ)])
+        print(p0)
+        print(bounds)
+        popt, pcov = curve_fit(
+            func, amps, argZ, p0=p0, bounds=bounds)
+        perr = np.sqrt(np.diag(pcov))
+        if printinfo:
+            res = [ufloat(opt, err) for opt, err in zip(popt, perr)]
+            print("  Fit cosine to Power Rabi data")
+            for r, name in zip(res, ["period", "ampl", "slope", "offset"]):
+                print(f"    {name:6s} {r}")
+        if ax:
+            ax.plot(amps, func(amps, *popt), '-', **pltkw)
+            if plotp0:
+                ax.plot(amps, func(amps, *p0), '--', **pltkw)
+        return popt, perr
+
     def _figtitle(self, Navg):
         readoutpower = opx_amp2pow(self.config['short_readout_amp'])
         return (

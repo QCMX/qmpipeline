@@ -405,10 +405,22 @@ try:
         localconfig['short_readout_amp'] = 0.316
 
         prog = progs[7] = qmtools.QMPowerRabi(
-            qmm, localconfig, Navg=1e5, duration_ns=8,
+            qmm, localconfig, Navg=2e5, duration_ns=8,
             drive_amps=np.linspace(0, 0.316 if highfq else 0.316, 41),
             drive_read_overlap_cycles=0)
         results['power_rabi:square_8ns_hpr'][i] = prog.run(plot=axs[1,3])
+
+        prog = progs[7] = qmtools.QMPowerRabi(
+            qmm, localconfig, Navg=2e5, duration_ns=8,
+            drive_amps=np.linspace(0, 0.1 if highfq else 0.316, 41),
+            drive_read_overlap_cycles=0)
+        results['power_rabi:square_8ns_hpr_fit'][i] = prog.run(plot=axs[1,3])
+
+        try:
+            popt, perr = prog.fit_cosine(ax=axs[1,3], plotp0=True)
+            localconfig['pi_amp'] = popt[0] / 2
+        except:
+            localconfig['pi_amp'] = 0.03
 
         # prog = progs[7] = qmtools.QMPowerRabi_Gaussian(
         #     qmm, localconfig, Navg=5e6, duration_ns=4,
