@@ -1697,7 +1697,8 @@ class QMRelaxation (QMProgram):
 class QMRamsey (QMProgram):
     """Ramsey sequence: pi/2 pulse, wait, pi/2 pulse, readout.
 
-    Uses short readout pulse and pi pulse amplitude.
+    Uses short readout pulse and half of pi_amp pulse amplitude to
+    go to the superposition state.
 
     Since we cannot store an arbitrary number of waveforms we need to bake
     waveforms that can be combined with the qua.wait of multiples of 4ns cycles.
@@ -1752,13 +1753,15 @@ class QMRamsey (QMProgram):
         # max cycles to wait in qua.wait, (maxdelay-waitB guaranteed multiple of 4ns)
         maxwaitcycles = (maxdelay - waitB) // 4
 
+        pulseamp = self.config['pi_amp'] / 2
+
         # Remember: baking modifies the qmconfig but this class instance uses its own deep-copy.
         # start pulse driveA, right aligned with 0-3ns wait
         baked_driveA = []
         for l in range(0, 4):
             with baking(self.config['qmconfig'], padding_method='none') as bake:
                 wf = np.zeros(driveAlen)
-                wf[-driveAlen-l:] = self.config['pi_amp']
+                wf[-drivelen-l:] = pulseamp
                 if l > 0:
                     wf[-l:] = 0
                 bake.add_op('driveA_%d'%l, 'qubit', [wf, [0]*driveAlen])
@@ -1767,7 +1770,7 @@ class QMRamsey (QMProgram):
         # end pulse driveB, right aligned
         with baking(self.config['qmconfig'], padding_method='none') as baked_driveB:
             wf = np.zeros(driveBlen)
-            wf[-drivelen:] = self.config['pi_amp']
+            wf[-drivelen:] = pulseamp
             baked_driveB.add_op('driveB', 'qubit', [wf, [0]*driveBlen])
             baked_driveB.play('driveB', 'qubit')
 
@@ -1779,7 +1782,7 @@ class QMRamsey (QMProgram):
                 wf[-2*drivelen-l:] = 1
                 wf[-drivelen-l:] = 0
                 wf[-drivelen:] = 1
-                bake.add_op('driveshort_%d'%l, 'qubit', [wf*self.config['pi_amp'], [0]*shortwflen])
+                bake.add_op('driveshort_%d'%l, 'qubit', [wf*pulseamp, [0]*shortwflen])
                 bake.play('driveshort_%d'%l, 'qubit')
             baked_driveshort.append(bake)
 
@@ -1841,7 +1844,7 @@ class QMRamsey (QMProgram):
 
     def _figtitle(self, Navg):
         readoutpower = opx_amp2pow(self.config['short_readout_amp'])
-        drivepower = opx_amp2pow(self.config['pi_amp'])
+        drivepower = opx_amp2pow(self.config['pi_amp']/2)
         return (
             f"Ramsey,  Navg {Navg:.2e}\n"
             f"resonator {self.config['resonatorLO']/1e9:.3f}GHz{self.config['resonatorIF']/1e6:+.3f}MHz\n"
