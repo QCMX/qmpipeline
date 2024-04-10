@@ -1458,7 +1458,7 @@ class QMPowerRabi (QMProgram):
         return a * np.cos(2*np.pi * amp / period) + bkg_slope * amp + bkg_offs
 
     def fit_cosine(
-            self, result=None, ax=None, plotp0=False,
+            self, result=None, ax=None, period0=0.05, plotp0=False,
             pltkw={'color': 'k', 'linewidth': 1}, printinfo=True):
         """Fit slanted sine shape to data.
 
@@ -1471,7 +1471,7 @@ class QMPowerRabi (QMProgram):
         argZ = np.unwrap(np.angle(res['Z']))
         maxmin = np.max(argZ)-np.min(argZ)
         p0 = self.last_p0 = [
-            0.05, # period
+            period0, # period
             maxmin/2.5, # amplitude
             0, # bkg slant
             np.mean(argZ) # bkg offset
