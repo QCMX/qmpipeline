@@ -41,8 +41,8 @@ importlib.reload(qminit)
 filename = '{datetime}_qmpipeline'
 fpath = data_path(filename, datesuffix='_qm')
 Vgate = np.concatenate([np.linspace(-6.775, -6.815, 201)])
-Vgate = np.concatenate([np.linspace(-6.795, -6.805, 101)])
-Vgate = np.array([-6.7793])
+Vgate = np.concatenate([np.linspace(-6.807, -6.808, 11)])
+#Vgate = np.array([-6.8053])
 Vstep = np.mean(np.abs(np.diff(Vgate)))
 print(f"Vgate measurement step: {Vstep*1e6:.1f}uV avg")
 Ngate = Vgate.size
@@ -103,6 +103,7 @@ results = {
     'resonator': [None]*Ngate,
     'resonator_P1': [None]*Ngate,
     'resonator_noise': [None]*Ngate,
+    'resonator:hpr': [None]*Ngate,
     'qubit_P2': [None]*Ngate,
     'qubit_P2:zoom': [None]*Ngate,
     'readoutSNR': [None]*Ngate,
@@ -120,6 +121,7 @@ results = {
     'ramsey:on_resonance': [None]*Ngate,
     'ramsey:detuned': [None]*Ngate,
     'ramsey:detuned_repetition': [None]*Ngate,
+    'ramsey_repeat:detuned': [None]*Ngate,
 }
 resonator = np.full((Vgate.size, fr_range.size), np.nan+0j)
 frfit = np.full((Vgate.size, 4, 2), np.nan)
@@ -170,6 +172,14 @@ try:
             mpl_pause(0.1)
             continue
         localconfig['resonatorIF'] = resonatorfit[0][0]
+
+        # High power readout
+        localconfig['readout_amp'] = 0.316
+        prog = progs[0] = qmtools.QMResonatorSpec(qmm, localconfig, Navg=500, resonatorIFs=fr_range)
+        results['resonator:hpr'][i] = resonatorspec = prog.run(plot=axs[1,0])
+        resonator[i] = resonatorspec['Z']
+        # Restore readout power
+        localconfig['readout_amp'] = baseconfig['readout_amp']
 
         #######
         # Resonator noise
@@ -222,7 +232,7 @@ try:
 
 
         # high fq, fq = 2.5GHz, need lower power
-        highfq = localconfig['resonatorIF'] > 206.5e6
+        highfq = localconfig['resonatorIF'] > 206.6e6
 
 
         #######
@@ -433,27 +443,35 @@ try:
         # Ramsey
         # Uses pi pulse amplitude from config
 
-        prog = progs[9] = qmtools.QMRamsey(
-            qmm, localconfig, Navg=5e5, drive_len_ns=8,
-            max_delay_ns=60)
-        results['ramsey:on_resonance'][i] = prog.run(plot=axs[1,4])
+        # prog = progs[9] = qmtools.QMRamsey(
+        #     qmm, localconfig, Navg=5e4, drive_len_ns=8,
+        #     max_delay_ns=60)
+        # results['ramsey:on_resonance'][i] = prog.run(plot=axs[1,4])
 
         # detune from qubit
-        localconfig['qubitIF'] = fq - qubitLO + 100e6
+        localconfig['qubitIF'] = fq - qubitLO + 20e6
 
-        prog = progs[9] = qmtools.QMRamsey(
-            qmm, localconfig, Navg=5e5, drive_len_ns=8,
-            max_delay_ns=60)
-        results['ramsey:detuned'][i] = prog.run(plot=axs[1,4])
+        # prog = progs[9] = qmtools.QMRamsey(
+        #     qmm, localconfig, Navg=5e4, drive_len_ns=8,
+        #     max_delay_ns=60)
+        # results['ramsey:detuned'][i] = prog.run(plot=axs[1,4])
 
-        prog = progs[9] = qmtools.QMRamsey(
-            qmm, localconfig, Navg=5e5, drive_len_ns=8,
+        # prog = progs[9] = qmtools.QMRamsey(
+        #     qmm, localconfig, Navg=5e4, drive_len_ns=8,
+        #     max_delay_ns=60)
+        # results['ramsey:detuned_repetition'][i] = prog.run(plot=axs[1,4])
+
+        prog = progs[9] = qmtools.QMRamseyRepeat(
+            qmm, localconfig, Nrep=1000, Navg=2e3, drive_len_ns=8,
             max_delay_ns=60)
-        results['ramsey:detuned_repetition'][i] = prog.run(plot=axs[1,4])
+        results['ramsey_repeat:detuned'][i] = prog.run(plot=axs[1,4])
 
         #######
         # Relaxation
         # Uses pi pulse amplitude from config
+
+        # retune onto qubit
+        localconfig['qubitIF'] = fq - qubitLO
 
         prog = progs[8] = qmtools.QMRelaxation(
             qmm, localconfig, Navg=1e5, drive_len_ns=8,
