@@ -42,7 +42,7 @@ filename = '{datetime}_qmpipeline_2tone'
 fpath = data_path(filename, datesuffix='_qm')
 Vgate = np.concatenate([np.linspace(-6.775, -6.815, 201)])
 Vgate = np.concatenate([np.linspace(-5.2, -5.3, int(0.1e4)+1)])
-#Vgate = np.array([-5.2513])
+Vgate = np.array([-5.281])
 Vstep = np.mean(np.abs(np.diff(Vgate)))
 print(f"Vgate measurement step: {Vstep*1e6:.1f}uV avg")
 Ngate = Vgate.size
@@ -106,6 +106,8 @@ results = {
     'resonator:hpr': [None]*Ngate,
     'qubit_P2': [None]*Ngate,
     'qubit_P2:zoom': [None]*Ngate,
+    'qubit_three_tone:1': [None]*Ngate,
+    'qubit_three_tone:2': [None]*Ngate,
     'readoutSNR': [None]*Ngate,
 }
 resonator = np.full((Vgate.size, fr_range.size), np.nan+0j)
@@ -277,17 +279,35 @@ try:
         # if 3.3e9 < fq < 3.5e9:
         #     print(f"  fq={fq} skip due to parisitic mode at 3.40GHz")
         #     continue
-        print(f"Updating qubit LO freq for fq={fq}")
-        qubitLO = int(max(2e9, np.ceil((fq+0.15e9)/1e8)*1e8)) # -250 to -150 MHz
+
+        # print(f"Updating qubit LO freq for fq={fq}")
+        # qubitLO = int(max(2e9, np.ceil((fq+0.15e9)/1e8)*1e8)) # -250 to -150 MHz
+
         # qubitLO = 2e9
         # if qubitLO == 3e9:
         #     qubitLO = 3.1e9
+
         print(f"  Choose qubit LO at {qubitLO/1e9}GHz")
         localconfig['qubitIF'] = fq - qubitLO
         # localconfig['qmconfig']['mixers']['octave_octave1_2'][0]['intermediate_frequency'] = fqest - qubitLO
         localconfig['qubitLO'] = qubitLO
         localconfig['qmconfig']['elements']['qubit']['mixInputs']['lo_frequency'] = qubitLO
         localconfig['qmconfig']['mixers']['octave_octave1_2'][0]['lo_frequency'] = qubitLO
+
+        ############
+        # Three tone
+
+        localconfig['saturation_amp'] = 1e-3 # -50 dB
+        prog = progs[4] = qmtools.QMQubitSpecThreeTone(
+            qmm, localconfig, Navg=20000, third_amp=localconfig['saturation_amp'],
+            thirdIFs=np.arange(-400e6, 400e6, 10e6))
+        results['qubit_three_tone:1'][i] = prog.run(plot=axs[1,2])
+
+        localconfig['saturation_amp'] = 3.16e-3 # -40 dB
+        prog = progs[4] = qmtools.QMQubitSpecThreeTone(
+            qmm, localconfig, Navg=20000, third_amp=localconfig['saturation_amp'],
+            thirdIFs=np.arange(-400e6, 400e6, 10e6))
+        results['qubit_three_tone:2'][i] = prog.run(plot=axs[1,2])
 
         # ######
         # High res fq vs P2

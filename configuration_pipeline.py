@@ -127,6 +127,22 @@ qmconfig = {
             },
         },
 
+        # second qubit on same OPX & octave output to multiplex pulses
+        # eg. for three-tone spectroscopy
+        'qubit2': {
+            'mixInputs': {
+                'I': ('con1', 3),
+                'Q': ('con1', 4),
+                'lo_frequency': qubitLO,
+                'mixer': 'octave_octave1_2',
+            },
+            'intermediate_frequency': qubitIF,
+            'operations': {
+                'const': 'const_pulse',
+                'saturation': 'saturation_pulse',
+            },
+        },
+
         'resonator': {
             'mixInputs': {
                 'I': ('con1', 7),
@@ -291,7 +307,7 @@ qmconfig = {
                 "correction": (1.0536929927766323, 0.18822958320379257, 0.18970587104558945, 1.045493170619011),
             },
         ],
-        
+
         "octave_octave1_2": [
             {
                 "intermediate_frequency": qubitIF,

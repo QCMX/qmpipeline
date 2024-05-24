@@ -424,6 +424,12 @@ class QMTimeOfFlight (QMProgram):
 
 
 class QMResonatorSpec (QMProgram):
+    """Continuous-wave one-tone spectroscopy of readout resonator.
+
+    Scales IQ to volts and corrects electrict delay.
+
+    Has utility function to fit Lorentzian to extract resonance frequency.
+    """
     def __init__(self, qmm, config, Navg, resonatorIFs):
         super().__init__(qmm, config)
         self.params = {'resonatorIFs': resonatorIFs, 'Navg': Navg}
@@ -652,77 +658,6 @@ class QMResonatorSpec_P2 (QMProgram):
             self.ax.clear()
 
 
-class QMQubitSpec (QMProgram):
-    def __init__(self, qmm, config, Navg, qubitIFs):
-        super().__init__(qmm, config)
-        self.params = {'qubitIFs': qubitIFs, 'Navg': Navg}
-
-    def _make_program(self):
-        read_amp_scale = self.config['readout_amp'] / \
-            self.config['qmconfig']['waveforms']['readout_wf']['sample']
-        drive_amp_scale = self.config['saturation_amp'] / \
-            self.config['qmconfig']['waveforms']['saturation_wf']['sample']
-        assert self.config['saturation_len'] == self.config['qmconfig']['pulses']['saturation_pulse']['length']
-        assert self.config['readout_len'] == self.config['qmconfig']['pulses']['readout_pulse']['length']
-        freqs = self.params['qubitIFs']
-
-        assert self.config['saturation_len'] >= self.config['readout_len']
-        readoutwait = int(
-            (self.config['saturation_len'] - self.config['readout_len']) / 2 / 4)  # cycles
-
-        with qua.program() as prog:
-            n = qua.declare(int)
-            f = qua.declare(int)
-            I = qua.declare(qua.fixed)
-            Q = qua.declare(qua.fixed)
-            I_st = qua.declare_stream()
-            Q_st = qua.declare_stream()
-            n_st = qua.declare_stream()
-            rand = qua.lib.Random()
-
-            qua.update_frequency('resonator', self.config['resonatorIF'])
-            with qua.for_(n, 0, n < self.params['Navg'], n + 1):
-                with qua.for_(*from_array(f, freqs)):
-                    qua.update_frequency('qubit', f)
-                    qua.wait(self.config['cooldown_clk'], 'resonator')
-                    # randomize demod error
-                    qua.wait(rand.rand_int(50)+4, 'resonator')
-                    qua.align()
-                    qua.play('saturation'*qua.amp(drive_amp_scale), 'qubit')
-                    qua.wait(readoutwait, 'resonator')
-                    qua.measure('readout'*qua.amp(read_amp_scale), 'resonator', None,
-                                qua.dual_demod.full(
-                                    'cos', 'out1', 'sin', 'out2', I),
-                                qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
-                    qua.save(I, I_st)
-                    qua.save(Q, Q_st)
-                qua.save(n, n_st)
-
-            with qua.stream_processing():
-                n_st.save('iteration')
-                I_st.buffer(len(freqs)).average().save('I')
-                Q_st.buffer(len(freqs)).average().save('Q')
-
-        self.qmprog = prog
-        return prog
-
-    def _initialize_liveplot(self, ax):
-        freqs = self.params['qubitIFs']
-        line, = ax.plot(freqs/1e6, np.full(len(freqs), np.nan))
-        ax.set_title("qubit spectroscopy analysis")
-        ax.set_xlabel(f"drive IF [MHz] + {self.config['qubitLO']/1e9:f}GHz")
-        ax.set_ylabel("|S|  (linear)")
-        self.line = line
-
-    def _update_liveplot(self, ax, resulthandles):
-        res = self._retrieve_results(resulthandles)
-        if res['Z'] is None:
-            return
-        self.line.set_ydata(np.abs(res['Z']) /
-                            self.config['readout_len'] * 2**12)
-        ax.relim(), ax.autoscale(), ax.autoscale_view()
-
-
 class QMNoiseSpectrum (QMProgram):
     """Readout many times to later do FFT of it.
     Does not use the cooldown time.
@@ -829,6 +764,175 @@ class QMNoiseSpectrum (QMProgram):
         if 'fft' not in res:
             return
         self.line.set_data(res['fftfreq'], np.abs(res['fft']))
+        ax.relim(), ax.autoscale(), ax.autoscale_view()
+
+
+class QMQubitSpec (QMProgram):
+    """Continuous wave two-tone spectroscopy of qubit.
+
+    Uses 'saturation' pulse (amplitude and qubitIF may be modified outside config.qmconfig),
+    and 'readout' pulse (amplitude and resonatorIF may be modified outside config.qmconfig).
+
+    Assumes saturation pulse longer than readout pulse.
+    Readout is centered in saturation pulse time-wise.
+    """
+    def __init__(self, qmm, config, Navg, qubitIFs):
+        super().__init__(qmm, config)
+        self.params = {'qubitIFs': qubitIFs, 'Navg': Navg}
+
+    def _make_program(self):
+        read_amp_scale = self.config['readout_amp'] / \
+            self.config['qmconfig']['waveforms']['readout_wf']['sample']
+        drive_amp_scale = self.config['saturation_amp'] / \
+            self.config['qmconfig']['waveforms']['saturation_wf']['sample']
+        assert self.config['saturation_len'] == self.config['qmconfig']['pulses']['saturation_pulse']['length']
+        assert self.config['readout_len'] == self.config['qmconfig']['pulses']['readout_pulse']['length']
+        freqs = self.params['qubitIFs']
+
+        assert self.config['saturation_len'] >= self.config['readout_len']
+        readoutwait = int(
+            (self.config['saturation_len'] - self.config['readout_len']) / 2 / 4)  # cycles
+
+        with qua.program() as prog:
+            n = qua.declare(int)
+            f = qua.declare(int)
+            I = qua.declare(qua.fixed)
+            Q = qua.declare(qua.fixed)
+            I_st = qua.declare_stream()
+            Q_st = qua.declare_stream()
+            n_st = qua.declare_stream()
+            rand = qua.lib.Random()
+
+            qua.update_frequency('resonator', self.config['resonatorIF'])
+            with qua.for_(n, 0, n < self.params['Navg'], n + 1):
+                with qua.for_(*from_array(f, freqs)):
+                    qua.update_frequency('qubit', f)
+                    qua.wait(self.config['cooldown_clk'], 'resonator')
+                    # randomize demod error
+                    qua.wait(rand.rand_int(50)+4, 'resonator')
+                    qua.align()
+                    qua.play('saturation'*qua.amp(drive_amp_scale), 'qubit')
+                    qua.wait(readoutwait, 'resonator')
+                    qua.measure('readout'*qua.amp(read_amp_scale), 'resonator', None,
+                                qua.dual_demod.full(
+                                    'cos', 'out1', 'sin', 'out2', I),
+                                qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
+                    qua.save(I, I_st)
+                    qua.save(Q, Q_st)
+                qua.save(n, n_st)
+
+            with qua.stream_processing():
+                n_st.save('iteration')
+                I_st.buffer(len(freqs)).average().save('I')
+                Q_st.buffer(len(freqs)).average().save('Q')
+
+        self.qmprog = prog
+        return prog
+
+    def _initialize_liveplot(self, ax):
+        freqs = self.params['qubitIFs']
+        line, = ax.plot(freqs/1e6, np.full(len(freqs), np.nan))
+        ax.set_title("qubit spectroscopy analysis")
+        ax.set_xlabel(f"drive IF [MHz] + {self.config['qubitLO']/1e9:f}GHz")
+        ax.set_ylabel("|S|  (linear)")
+        self.line = line
+
+    def _update_liveplot(self, ax, resulthandles):
+        res = self._retrieve_results(resulthandles)
+        if res['Z'] is None:
+            return
+        self.line.set_ydata(np.abs(res['Z']) /
+                            self.config['readout_len'] * 2**12)
+        ax.relim(), ax.autoscale(), ax.autoscale_view()
+
+
+class QMQubitSpecThreeTone (QMProgram):
+    """Continuous wave drive constant at qubitIF then sweep another drive tone.
+
+    Uses 'saturation' pulse (amplitude and qubitIF may be modified outside config.qmconfig),
+    and 'readout' pulse (amplitude and resonatorIF may be modified outside config.qmconfig).
+    """
+    def __init__(self, qmm, config, Navg, third_amp, thirdIFs):
+        super().__init__(qmm, config)
+        self.params = {'thirdIFs': thirdIFs, 'third_amp': third_amp, 'Navg': Navg}
+
+    def _make_program(self):
+        read_amp_scale = self.config['readout_amp'] / \
+            self.config['qmconfig']['waveforms']['readout_wf']['sample']
+        drive_amp_scale = self.config['saturation_amp'] / \
+            self.config['qmconfig']['waveforms']['saturation_wf']['sample']
+        third_amp_scale = self.params['third_amp'] / \
+            self.config['qmconfig']['waveforms']['saturation_wf']['sample']
+        assert self.config['saturation_len'] == self.config['qmconfig']['pulses']['saturation_pulse']['length']
+        assert self.config['readout_len'] == self.config['qmconfig']['pulses']['readout_pulse']['length']
+        freqs = self.params['thirdIFs']
+
+        # center readout in saturation pulse
+        assert self.config['saturation_len'] >= self.config['readout_len']
+        readoutwait = int(
+            (self.config['saturation_len'] - self.config['readout_len']) / 2 / 4)  # cycles
+
+        with qua.program() as prog:
+            n = qua.declare(int)
+            f = qua.declare(int)
+            I = qua.declare(qua.fixed)
+            Q = qua.declare(qua.fixed)
+            I_st = qua.declare_stream()
+            Q_st = qua.declare_stream()
+            n_st = qua.declare_stream()
+            rand = qua.lib.Random()
+
+            qua.update_frequency('resonator', self.config['resonatorIF'])
+            qua.update_frequency('qubit', self.config['qubitIF'])
+            with qua.for_(n, 0, n < self.params['Navg'], n + 1):
+                with qua.for_(*from_array(f, freqs)):
+                    qua.update_frequency('qubit2', f)
+                    qua.wait(self.config['cooldown_clk'], 'resonator')
+                    # randomize demod error
+                    qua.wait(rand.rand_int(50)+4, 'resonator')
+                    qua.align()
+                    qua.play('saturation'*qua.amp(drive_amp_scale), 'qubit')
+                    qua.play('saturation'*qua.amp(third_amp_scale), 'qubit2')
+                    qua.wait(readoutwait, 'resonator')
+                    qua.measure('readout'*qua.amp(read_amp_scale), 'resonator', None,
+                                qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
+                                qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
+                    qua.save(I, I_st)
+                    qua.save(Q, Q_st)
+                qua.save(n, n_st)
+
+            with qua.stream_processing():
+                n_st.save('iteration')
+                I_st.buffer(len(freqs)).average().save('I')
+                Q_st.buffer(len(freqs)).average().save('Q')
+
+        self.qmprog = prog
+        return prog
+
+    def _initialize_liveplot(self, ax):
+        freqs = self.params['thirdIFs']
+        self.line, = ax.plot(freqs/1e6, np.full(len(freqs), np.nan))
+
+        drivepower = opx_amp2pow(self.config['saturation_amp'])
+        thirdpower = opx_amp2pow(self.params['third_amp'])
+        readoutpower = opx_amp2pow(self.config['readout_amp'])
+        ax.set_title(
+            f"Three-tone spectroscopy   Navg {self.params['Navg']}\n"
+            f"resonator {self.config['resonatorLO']/1e9:.3f}GHz{self.config['resonatorIF']/1e6:+.3f}MHz\n"
+            f"qubit {self.config['qubitLO']/1e9:.3f}GHz{self.config['qubitIF']/1e6:+.3f}MHz\n"
+            f"{self.config['readout_len']/1e3:.0f}us readout at {readoutpower:.1f}dBm{self.config['resonator_output_gain']:+.1f}dB\n"
+            f"{self.config['saturation_len']/1e3:.0f}us drive at {drivepower:.1f}dBm{self.config['qubit_output_gain']:+.1f}dB\n"
+            f"{self.config['saturation_len']/1e3:.0f}us third tone at {thirdpower:.1f}dBm{self.config['qubit_output_gain']:+.1f}dB",
+            fontsize=8)
+        ax.set_xlabel("third tone IF / MHz")
+        ax.set_ylabel("arg S")
+        self.ax = ax
+
+    def _update_liveplot(self, ax, resulthandles):
+        res = self._retrieve_results(resulthandles)
+        if res['Z'] is None:
+            return
+        self.line.set_ydata(np.unwrap(np.angle(res['Z'])))
         ax.relim(), ax.autoscale(), ax.autoscale_view()
 
 
@@ -2280,7 +2384,8 @@ class QMRamseyChevronRepeat (QMProgram):
 
 if __name__ == '__main__':
     import importlib
-    import configuration as config
+    import configuration_pipeline as config
+    # import configuration as config
     importlib.reload(config)
 
     qmm = qminit.connect()
@@ -2311,6 +2416,9 @@ if __name__ == '__main__':
     #                 qubitIFs=np.arange(50e6, 450e6, 5e6))
     # results = p.run(plot=True)
 
+    # p = QMQubitSpecThreeTone(qmm, config, Navg=100, third_amp=0.12, thirdIFs=np.linspace(-100e6, -200e6, 11))
+    # p.simulate(20000, plot=True)
+
     # p = QMQubitSpec_P2(
     #     qmm, config, Navg=500, qubitIFs=np.arange(50e6, 450e6, 5e6),
     #     drive_amps=np.logspace(np.log10(0.01), np.log10(0.316), 11))
@@ -2329,8 +2437,8 @@ if __name__ == '__main__':
     # results = p.run(plot=True)
     # p.simulate(30000, plot=True)
 
-    p = QMRamseyChevronRepeat(qmm, config, qubitIFs=np.linspace(-200e6, -50e6, 11), Nrep=10, Navg=1000, drive_len_ns=8, max_delay_ns=52)
-    results = p.run(plot=True)
+    # p = QMRamseyChevronRepeat(qmm, config, qubitIFs=np.linspace(-200e6, -50e6, 11), Nrep=10, Navg=1000, drive_len_ns=8, max_delay_ns=52)
+    # results = p.run(plot=True)
 
 #%%
 
