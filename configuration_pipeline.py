@@ -31,7 +31,7 @@ qubit_output_gain     = -10 # Octave RF2, range -20 to +20dB
 # the cavity and saturating the readout.
 
 # ADC offset in Volts
-adcoffset = np.array([0.033352255153200054 , 0.03991713837942661])
+adcoffset = np.array([0.057299890319824215 , 0.07062872677001952])
 
 ## Frequencies
 resonatorLO = 4.8500e9
