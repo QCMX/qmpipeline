@@ -13,7 +13,6 @@ import qm.qua as qua
 from qualang_tools.loops import from_array
 
 from helpers import data_path, mpl_pause, plt2dimg
-from qm_helpers import int_forloop_values
 
 import configuration as config
 import qminit
@@ -28,17 +27,21 @@ qmm = qminit.connect()
 importlib.reload(config)
 importlib.reload(qminit)
 
+qm = qmm.open_qm(config.qmconfig)
+qm.octave.calibrate_element('qubit', [(config.qubitLO, config.qubitIF)])
+
 filename = '{datetime}_qm_qubit_vs_power2'
 fpath = data_path(filename, datesuffix='_qm')
 
-Navg = 1000
+Navg = 5000
 
-f_min = 50e6
-f_max = 450e6
-df = 2e6
-freqs = int_forloop_values(f_min, f_max, df)
+f_min = -400e6
+f_max = -100e6
+df = 5e6
+freqs = np.arange(f_min, f_max, df)
 
-amps = amps = np.logspace(np.log10(0.0316), np.log10(1), 51)
+amps = np.logspace(np.log10(0.01), np.log10(0.1), 11)
+amps = np.logspace(np.log10(0.0056), np.log10(0.1), 11)
 ampsV = amps*config.saturation_amp
 
 try:
@@ -47,8 +50,8 @@ except:
     Vgate = np.nan
 
 # Align readout pulse in middle of saturation pulse
-assert config.saturation_len > config.short_readout_len
-readoutwait = int(((config.saturation_len - config.short_readout_len) / 2) / 4) # cycles
+assert config.saturation_len > config.readout_len
+readoutwait = int(((config.saturation_len - config.readout_len) / 2) / 4) # cycles
 print("Readoutwait", readoutwait*4, "ns")
 
 with qua.program() as qubit_vs_power:
@@ -64,14 +67,14 @@ with qua.program() as qubit_vs_power:
 
     with qua.for_(n, 0, n < Navg, n + 1):
         with qua.for_(*from_array(a, amps)):
-            with qua.for_(f, f_min, f <= f_max, f + df):
+            with qua.for_(*from_array(f, freqs)):
                 qua.update_frequency('qubit', f)
                 qua.wait(config.cooldown_clk, 'resonator')
                 qua.wait(rand.rand_int(50)+4, 'resonator')
                 qua.align()
                 qua.play('saturation'*qua.amp(a), 'qubit')
                 qua.wait(readoutwait, 'resonator')
-                qua.measure('short_readout', 'resonator', None,
+                qua.measure('readout', 'resonator', None,
                         qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
                         qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
                 qua.save(I, I_st)
@@ -86,7 +89,7 @@ with qua.program() as qubit_vs_power:
 
 # Execute program
 qm = qmm.open_qm(config.qmconfig)
-qminit.octave_setup_resonator(qm, config, short_readout_gain=True)
+qminit.octave_setup_resonator(qm, config)
 qminit.octave_setup_qubit(qm, config)
 job = qm.execute(qubit_vs_power)
 tstart = time.time()
@@ -179,13 +182,13 @@ axs[1,1].set_xlabel('drive output power / dBm', fontsize=8)
 secax = axs[1,1].secondary_xaxis('top', functions=(pow2amp, amp2pow))
 secax.set_xlabel('relative amplitude', fontsize=8)
 #axs[1,1].set_ylabel('fr IF / MHz', fontsize=8), axs[1,1].set_xlabel('relative pulse amplitude', fontsize=8)
-readoutpower = 10*np.log10(config.short_readout_amp**2 * 10) # V to dBm
+readoutpower = 10*np.log10(config.readout_amp**2 * 10) # V to dBm
 saturationpower = 10*np.log10(config.saturation_amp**2 * 10) # V to dBm
 title = (
     f"readout {config.resonatorLO/1e9:.3f}GHz+{config.resonatorIF/1e6:.2f}MHz"
     f"   qubit LO {config.qubitLO/1e9:.3f}GHz"
     f"   Navg {Nactual}"
-    f"\n{config.short_readout_len}ns short readout at {readoutpower:.1f}dBm{config.resonator_output_gain+config.short_readout_amp_gain:+.1f}dB"
+    f"\n{config.readout_len}ns readout at {readoutpower:.1f}dBm{config.resonator_output_gain:+.1f}dB"
     f",   {config.resonator_input_gain:+.1f}dB input gain"
     f"\n{config.saturation_len}ns saturation pulse at {saturationpower:.1f}dBm{config.qubit_output_gain:+.1f}dB"
     f"\nVgate={Vgate:.7f}V")

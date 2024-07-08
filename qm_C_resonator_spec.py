@@ -32,11 +32,11 @@ try:
 except:
     Vgate = np.nan
 
-Navg = 1000
+Navg = 2000
 
-f_min = 202e6 # 102e6
-f_max = 210e6 # 112e6
-df = 0.05e6
+f_min = 154e6 # 102e6
+f_max = 258e6 # 112e6
+df = 0.5e6
 freqs = np.arange(f_min, f_max + df/2, df)  # + df/2 to add f_max to freqs
 
 with qua.program() as resonator_spec:

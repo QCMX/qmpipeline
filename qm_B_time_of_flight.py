@@ -22,7 +22,7 @@ importlib.reload(qminit)
 filename = '{datetime}_qm_time_of_flight'
 fpath = data_path(filename, datesuffix='_qm')
 
-Navg = 20000
+Navg = 1000
 
 with qua.program() as tof_cal:
     n = qua.declare(int)  # variable for averaging loop
@@ -35,6 +35,7 @@ with qua.program() as tof_cal:
     with qua.for_(n, 0, n < Navg, n + 1):
         qua.reset_phase('resonator') # reset the phase of the next played pulse
         #qua.play('preload', 'resonator')
+        #qua.play('saturation', 'qubit')
         qua.measure('readout', 'resonator', adc_st)
         qua.wait(config.cooldown_clk, 'resonator')  # wait for photons in resonator to decay
         qua.save(n, n_st)

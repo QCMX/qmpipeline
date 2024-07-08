@@ -21,45 +21,48 @@ qmm = qminit.connect()
 
 #%%
 
-from instruments.basel import BaselDACChannel
+import importlib
+import BlueforsPoll
+importlib.reload(BlueforsPoll)
 
-gate = BaselDACChannel(7)
+from BlueforsPoll import BlueforsThermoPoll
+from instruments.blueforsthermometer import BlueforsOldThermometer
 
-assert gate.get_state(), "Basel channel not ON"
-print("CH", gate.channel, ":", gate.get_voltage(), "V")
+try:
+    poll.stop()
+except: pass
 
-GATERAMP_STEP = 2e-6
-GATERAMP_STEPTIME = 0.02
+thermo = BlueforsOldThermometer()
+poll = BlueforsThermoPoll.make_poll(thermo, ['MXC', '4K'], interval=5)
 
 #%%
+from datetime import datetime
 
 importlib.reload(config)
 importlib.reload(qminit)
 
-filename = '{datetime}_qm_resonator_vs_gate'
+filename = '{datetime}_qm_resonator_vs_time'
 fpath = data_path(filename, datesuffix='_qm')
 
-Vgate = np.concatenate([np.linspace(-5.35, -5.2, int(6e3)+1)])
-Vgate = np.concatenate([np.linspace(-5.26, -5.28, int(1e3)+1)])
-Vgate = np.concatenate([np.linspace(-5.1, -5.4, int(6e3)+1)])
-Vstep = np.mean(np.abs(np.diff(Vgate)))
-print(f"Vgate measurement step: {Vstep*1e6:.1f}uV avg")
-Ngate = Vgate.size
-assert Vstep > 1.19e-6, "Vstep smaller than Basel resolution"
+Nt = 30000
+dt = 2 # sec
+print(Nt * dt / 3600, "hours")
 
-# Vhyst = -5.24
-# print(f"Gate hysteresis sweep ({abs(gate.get_voltage()-Vhyst)/GATERAMP_STEP*GATERAMP_STEPTIME/60:.1f}min)")
-# gate.ramp_voltage(Vhyst, 2*GATERAMP_STEP, GATERAMP_STEPTIME)
+try:
+    Vgate = gate.get_voltage()
+except:
+    Vgate = np.nan
 
-Navg = 50
-f_min = 205e6
-f_max = 208e6
+Navg = 200
+f_min = 200e6
+f_max = 209e6
 df = 0.05e6
 freqs = np.arange(f_min, f_max + df/2, df)  # + df/2 to add f_max to freqs
 Nf = len(freqs)
 
-dataS21 = np.full((Ngate, Nf), np.nan+0j)
-tracetime = np.full(Ngate, np.nan)
+dataS21 = np.full((Nt, Nf), np.nan+0j)
+tracetime = np.full(Nt, np.nan)
+tracetemp = np.full(Nt, np.nan)
 
 with qua.program() as resonator_spec:
     ngate = qua.declare(int)
@@ -71,7 +74,7 @@ with qua.program() as resonator_spec:
     I_st = qua.declare_stream()
     Q_st = qua.declare_stream()
 
-    with qua.for_(ngate, 0, ngate < Ngate, ngate + 1):
+    with qua.for_(ngate, 0, ngate < Nt, ngate + 1):
         qua.pause()
         with qua.for_(n, 0, n < Navg, n + 1):
             with qua.for_(f, f_min, f <= f_max, f + df):  # integer loop
@@ -89,17 +92,17 @@ with qua.program() as resonator_spec:
         I_st.buffer(Navg, len(freqs)).map(qua.FUNCTIONS.average(0)).save_all('I')
         Q_st.buffer(Navg, len(freqs)).map(qua.FUNCTIONS.average(0)).save_all('Q')
 
-print(f"Setting gate ({abs(gate.get_voltage()-Vgate[0])/GATERAMP_STEP*GATERAMP_STEPTIME/60:.1f}min)")
-gate.ramp_voltage(Vgate[0], GATERAMP_STEP, GATERAMP_STEPTIME)
-print("Wait for gate to settle")
-time.sleep(5)
 
-fig, ax = plt.subplots()
-img = plt2dimg(ax, Vgate, freqs, np.abs(dataS21))
-ax.set_xlabel("Vgate / V")
+fig, (ax, ax2) = plt.subplots(nrows=2, sharex=True, layout='constrained')
+ts = np.arange(Nt)*dt / 3600
+img = plt2dimg(ax, ts, freqs, np.abs(dataS21))
+ax.set_xlabel("Time / hours")
 ax.set_ylabel("resonator IF")
 #ax.yaxis.set_major_formatter(EngFormatter(sep='', unit='Hz'))
 fig.colorbar(img, ax=ax).set_label("|S| / linear")
+tline, = ax2.plot(ts, tracetemp)
+ax2.set_ylabel('TMXC / K')
+
 readoutpower = 10*np.log10(config.readout_amp**2 * 10) # V to dBm
 saturationpower = 10*np.log10(config.saturation_amp**2 * 10) # V to dBm
 title = (
@@ -108,7 +111,6 @@ title = (
     f"\n{config.readout_len}ns readout at {readoutpower:.1f}dBm{config.resonator_output_gain:+.1f}dB"
     f",   {config.resonator_input_gain:+.1f}dB input gain")
 fig.suptitle(title, fontsize=8)
-fig.tight_layout()
 
 
 QMSLEEP = 0.05
@@ -124,12 +126,9 @@ while not job.is_paused():
 
 tgate = []
 tqm = []
-estimator = DurationEstimator(Ngate)
+estimator = DurationEstimator(Nt)
 try:
-    for i in range(Ngate):
-        tstart = time.time()
-        gate.ramp_voltage(Vgate[i], GATERAMP_STEP, GATERAMP_STEPTIME)
-        tgate.append(time.time()-tstart)
+    for i in range(Nt):
         tracetime[i] = time.time()
 
         tstart = time.time()
@@ -137,15 +136,19 @@ try:
         while not job.is_paused() and not job.status == 'completed':
             mpl_pause(QMSLEEP)
         tqm.append(time.time()-tstart)
+        tracetemp[i] = poll.get_temp('MXC')[0]
 
-        if i%100 == 0 or i == Ngate-1:
+        if i%100 == 0 or i == Nt-1:
             I = Ihandle.fetch_all()['value']
             Q = Qhandle.fetch_all()['value']
             l = min(I.shape[0], Q.shape[0])
             dataS21[:l] = I[:l] + 1j * Q[:l]
             plt2dimg_update(img, np.abs(dataS21))
+            tline.set_ydata(tracetemp)
+            ax2.relim(), ax2.autoscale(), ax2.autoscale_view()
 
         estimator.step(i)
+        mpl_pause(max(QMSLEEP, dt - (time.time() - tstart)))
 finally:
     job.halt()
     estimator.end()
@@ -157,27 +160,14 @@ finally:
     except:
         pass
     np.savez_compressed(
-        fpath, Navg=Navg, f=freqs, dataS21=dataS21, Vgate=Vgate,
+        fpath, Navg=Navg, f=freqs, dataS21=dataS21, Vgate=Vgate, Nt=Nt,
         config=config.meta)
     print("Time per trace:", (np.nanmax(tracetime)-np.nanmin(tracetime))/np.count_nonzero(~np.isnan(tracetime)), 's')
     print("Time for gate set:", np.mean(tgate), "s")
     print("Time for QM execution:", np.mean(tqm), "s")
 
     plt2dimg_update(img, np.abs(dataS21))
-    fig.tight_layout()
-    # fig.savefig(fpath+'.png', dpi=300)
-
-    arg = np.unwrap(np.unwrap(np.angle(dataS21), axis=1), axis=0)
-
-    fig, axs = plt.subplots(nrows=2, sharex=True, sharey=True, layout='constrained')
-    img = plt2dimg(axs[0], Vgate, freqs/1e6, 10*np.log10(np.abs(dataS21)**2 * 10))
-    fig.colorbar(img, ax=axs[0]).set_label("|S| / dBm")
-    img = plt2dimg(axs[1], Vgate, freqs/1e6, arg)
-    fig.colorbar(img, ax=axs[1]).set_label("arg S")
-    axs[0].set_ylabel('resonator IF / MHz', fontsize=6)
-    axs[1].set_ylabel('resonator IF / MHz', fontsize=6)
-    axs[1].set_xlabel("Vgate / V")
-    fig.suptitle(title, fontsize=8)
+    tline.set_ydata(tracetemp)
     fig.savefig(fpath+'.png', dpi=300)
 
 #%%
@@ -192,10 +182,21 @@ plt.plot(dat['Vgate'], np.angle(dat['dataS21'])[:,fidx])
 
 #%%
 
-#Shuttle
-Vtarget = 0
+from instruments.basel import BaselDACChannel
 
-step = 30e-6
+gate = BaselDACChannel(7)
+
+assert gate.get_state(), "Basel channel not ON"
+print("CH", gate.channel, ":", gate.get_voltage(), "V")
+
+GATERAMP_STEP = 2e-6
+GATERAMP_STEPTIME = 0.02
+
+#%%
+#Shuttle
+Vtarget = -5.281 # 6.6173
+
+step = 2e-6
 steptime = 0.02
 print("Ramp time:", np.abs(Vtarget - gate.get_voltage()) / step * steptime / 60, "min")
 gate.ramp_voltage(Vtarget, step, steptime)

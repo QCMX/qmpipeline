@@ -29,9 +29,9 @@ importlib.reload(qminit)
 filename = '{datetime}_qm_power_rabi_highres_vs_f2'
 fpath = data_path(filename, datesuffix='_qm')
 
-Navg = int(2e6)
+Navg = int(1e6)
 
-maxduration = 15 # cycles
+maxduration = 20 # cycles
 
 # minimum wait: 4cycles = 16ns
 drive_read_overlap = 0 # cycles
@@ -41,7 +41,7 @@ actual_overlap = drive_read_overlap # due to additional short waveform
 duration_clk = np.arange(4, maxduration, 1)
 duration_ns = np.arange(0, maxduration*4, 1)
 
-f2 = np.linspace(200e6, 450e6, 21)
+f2 = np.linspace(-400e6, -220e6, 11)
 
 try:
     Vgate = gate.get_voltage()
@@ -128,7 +128,7 @@ with qua.program() as time_rabi:
                 qua.save(Q, Q_st)
                 qua.wait(config.cooldown_clk, 'resonator')
                 qua.wait(rand.rand_int(50)+4, 'resonator')
-                
+
                 qua.align()
                 qua.wait(12+drive_read_overlap, 'qubit')
                 baked_saturation[3].run()
@@ -152,7 +152,7 @@ with qua.program() as time_rabi:
 # #%%
 # from qm import LoopbackInterface, SimulationConfig
 # simulate_config = SimulationConfig(
-#     duration=25000, # cycles
+#     duration=10000, # cycles
 #     simulation_interface=LoopbackInterface(([('con1', 1, 'con1', 1), ('con1', 2, 'con1', 2)])))
 # job = qmm.simulate(config.qmconfig, time_rabi, simulate_config)  # do simulation with qmm
 

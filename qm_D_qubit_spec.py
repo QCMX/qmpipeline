@@ -31,10 +31,10 @@ importlib.reload(qminit)
 filename = '{datetime}_qm_qubit_spec'
 fpath = data_path(filename, datesuffix='_qm')
 
-Navg = 20000
+Navg = 700
 
-f_min = 10e6
-f_max = 550e6
+f_min = -400e6
+f_max = -10e6
 df = 2e6
 freqs = np.arange(f_min, f_max + df/2, df)  # + df/2 to add f_max to freqs
 

@@ -23,8 +23,7 @@ qmm = qminit.connect()
 
 from instruments.basel import BaselDACChannel
 
-gate = BaselDACChannel(3) # 5 GHz
-#gate = BaselDACChannel(7) # 7 GHz
+gate = BaselDACChannel(7)
 
 assert gate.get_state(), "Basel channel not ON"
 print("CH", gate.channel, ":", gate.get_voltage(), "V")
@@ -37,11 +36,15 @@ GATERAMP_STEPTIME = 0.02
 importlib.reload(config)
 importlib.reload(qminit)
 
+qm = qmm.open_qm(config.qmconfig)
+qm.octave.calibrate_element('qubit', [(config.qubitLO, config.qubitIF)])
+
 filename = '{datetime}_qm_qubit_spec_vs_Vgate'
 fpath = data_path(filename, datesuffix='_qm')
 
 #Vgate = np.concatenate([np.linspace(-4.92, -4.93, 401)])
-Vgate = np.concatenate([np.linspace(-4.412, -4.409, 101)])
+# Vgate = np.concatenate([np.linspace(-4.412, -4.409, 101)])
+Vgate = np.concatenate([np.linspace(-5.1, -5.4, 1001)])
 Vstep = np.mean(np.abs(np.diff(Vgate)))
 print(f"Vgate measurement step: {Vstep*1e6:.1f}uV avg")
 Ngate = Vgate.size
@@ -49,9 +52,9 @@ assert Vstep > 1.19e-6, "Vstep smaller than Basel resolution"
 
 Navg = 1000
 
-f_min = 20e6
+f_min = -450e6
 f_max = 450e6
-df = 5e6
+df = 1e6
 freqs = np.arange(f_min, f_max + df/2, df)  # + df/2 to add f_max to freqs
 Nf = len(freqs)
 
@@ -103,7 +106,6 @@ print(f"Setting gate ({abs(gate.get_voltage()-Vgate[0])/GATERAMP_STEP*GATERAMP_S
 gate.ramp_voltage(Vgate[0], GATERAMP_STEP, GATERAMP_STEPTIME)
 print("Wait for gate to settle")
 time.sleep(10)
-
 
 # Prepare live plot
 dataS21 = np.full((Ngate, Nf), np.nan+0j)
@@ -227,9 +229,9 @@ fig.savefig(fpath+'.png')
 #%%
 
 #Shuttle
-Vtarget = -4.41 # 6.6173
+Vtarget = -5.2745     # 6.6173
 
-step = 5e-6
+step = 30e-6
 steptime = 0.02
 print("Ramp time:", np.abs(Vtarget - gate.get_voltage()) / step * steptime / 60, "min")
 gate.ramp_voltage(Vtarget, step, steptime)

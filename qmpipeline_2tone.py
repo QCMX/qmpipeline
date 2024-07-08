@@ -22,7 +22,7 @@ gate = BaselDACChannel(7) # 5 GHz
 assert gate.get_state(), "Basel channel not ON"
 print("CH", gate.channel, ":", gate.get_voltage(), "V")
 
-GATERAMP_STEP = 1e-6
+GATERAMP_STEP = 2e-6
 GATERAMP_STEPTIME = 0.02
 
 #%%
@@ -41,8 +41,8 @@ importlib.reload(qminit)
 filename = '{datetime}_qmpipeline_2tone'
 fpath = data_path(filename, datesuffix='_qm')
 Vgate = np.concatenate([np.linspace(-6.775, -6.815, 201)])
-Vgate = np.concatenate([np.linspace(-5.2, -5.3, int(0.1e4)+1)])
-Vgate = np.array([-5.281])
+Vgate = np.concatenate([np.linspace(-5.18, -5.23, int(2.5e2)+1)])
+#Vgate = np.array([-5.281])
 Vstep = np.mean(np.abs(np.diff(Vgate)))
 print(f"Vgate measurement step: {Vstep*1e6:.1f}uV avg")
 Ngate = Vgate.size
@@ -86,7 +86,7 @@ pq = qmtools.QMTimeOfFlight(qmm, localconfig, Navg=500)
 tof = pq.run()
 pq.apply_offset_to(baseconfig)
 
-barefreq = 5.05578e9
+barefreq = 5.05544e9
 bareIF = barefreq - baseconfig['resonatorLO']
 # def fq_estimate(deltafr):
 #     """Convert resonance shift (Hz, compared to no qubit) to qubit frequency (Hz)"""
@@ -297,17 +297,17 @@ try:
         ############
         # Three tone
 
-        localconfig['saturation_amp'] = 1e-3 # -50 dB
-        prog = progs[4] = qmtools.QMQubitSpecThreeTone(
-            qmm, localconfig, Navg=20000, third_amp=localconfig['saturation_amp'],
-            thirdIFs=np.arange(-400e6, 400e6, 10e6))
-        results['qubit_three_tone:1'][i] = prog.run(plot=axs[1,2])
+        # localconfig['saturation_amp'] = 1e-3 # -50 dB
+        # prog = progs[4] = qmtools.QMQubitSpecThreeTone(
+        #     qmm, localconfig, Navg=20000, third_amp=localconfig['saturation_amp'],
+        #     thirdIFs=np.arange(-400e6, 400e6, 10e6))
+        # results['qubit_three_tone:1'][i] = prog.run(plot=axs[1,2])
 
-        localconfig['saturation_amp'] = 3.16e-3 # -40 dB
-        prog = progs[4] = qmtools.QMQubitSpecThreeTone(
-            qmm, localconfig, Navg=20000, third_amp=localconfig['saturation_amp'],
-            thirdIFs=np.arange(-400e6, 400e6, 10e6))
-        results['qubit_three_tone:2'][i] = prog.run(plot=axs[1,2])
+        # localconfig['saturation_amp'] = 3.16e-3 # -40 dB
+        # prog = progs[4] = qmtools.QMQubitSpecThreeTone(
+        #     qmm, localconfig, Navg=20000, third_amp=localconfig['saturation_amp'],
+        #     thirdIFs=np.arange(-400e6, 400e6, 10e6))
+        # results['qubit_three_tone:2'][i] = prog.run(plot=axs[1,2])
 
         # ######
         # High res fq vs P2
@@ -357,6 +357,7 @@ finally:
         fpath, Vgate=Vgate, results=results, baseconfig=baseconfig,
         resonator=resonator, resonatorfit=frfit,
         tof_precalibration=tof,
+        fq_estimate=fq_estimate, barefreq=barefreq,
         measurement_duration=estimator.elapsed())
     fig.savefig(fpath+'.png')
     print("Data saved.")

@@ -833,17 +833,63 @@ class QMQubitSpec (QMProgram):
         freqs = self.params['qubitIFs']
         line, = ax.plot(freqs/1e6, np.full(len(freqs), np.nan))
         ax.set_title("qubit spectroscopy analysis")
+        readoutpower = opx_amp2pow(self.config['readout_amp'])
+        drivepower = opx_amp2pow(self.config['saturation_amp'])
+        ax.set_title(
+            "Qubit spectroscopy\n"
+            f"resonator {self.config['resonatorLO']/1e9:.3f}GHz{self.config['resonatorIF']/1e6:+.3f}MHz\n"
+            f"qubit LO {self.config['qubitLO']/1e9:.3f}GHz"
+            f"   Navg {self.params['Navg']}\n"
+            f"{self.config['readout_len']/1e3:.0f}us readout at {readoutpower:.1f}dBm{self.config['resonator_output_gain']:+.1f}dB\n"
+            f"{self.config['saturation_len']/1e3:.0f}us drive at {drivepower:.1f}dBm{self.config['qubit_output_gain']:+.1f}dB",
+            fontsize=8)
         ax.set_xlabel(f"drive IF [MHz] + {self.config['qubitLO']/1e9:f}GHz")
-        ax.set_ylabel("|S|  (linear)")
+        ax.set_ylabel("arg S")
         self.line = line
+        self.ax = ax
 
     def _update_liveplot(self, ax, resulthandles):
         res = self._retrieve_results(resulthandles)
         if res['Z'] is None:
             return
-        self.line.set_ydata(np.abs(res['Z']) /
-                            self.config['readout_len'] * 2**12)
+        # self.line.set_ydata(np.abs(res['Z']) /
+        #                     self.config['readout_len'] * 2**12)
+        self.line.set_ydata(np.unwrap(np.angle(res['Z'])))
         ax.relim(), ax.autoscale(), ax.autoscale_view()
+
+    def find_dip(self, window_length=5, ax=None, printinfo=True):
+        """Tries to estimate qubit frequency by finding the minimum in the arg(Z) response.
+
+        Raises PipelineException if no reliable dip is found.
+
+        Sets qubit IF in config supplied to 'apply_to_config'.
+        Returns dip IF frequency.
+        """
+        qubitIFs = self.params['qubitIFs']
+        res = self._retrieve_results()
+        argZ = np.unwrap(np.angle(res['Z']))
+
+        if window_length < 3:
+            warnings.warn(f"Smoothing window {window_length} smaller 3. Skip smoothing.")
+            filt = argZ
+        else:
+            filt = savgol_filter(argZ, window_length, polyorder=2)
+        qi = np.argmin(filt)
+        signal = np.abs(filt[qi] - np.median(filt))
+        noise = np.std(np.diff(argZ))/2**0.5
+        if printinfo:
+            print("Fine tune qubit IF")
+            print(f"    {signal/noise:.1e} SNR: {signal:.2e} signal vs {noise:.2e} noise level")
+            print(f"    dip IF: {qubitIFs[qi]/1e6}MHz")
+        if signal < 3*noise:
+            raise PipelineException(f"Signal {signal} to noise {noise} not larger 3.")
+        if qi <= 1 or qi >= len(qubitIFs)-2:
+            raise PipelineException(f"Minimum on the boundary of IF range {qi} in [0,{len(qubitIFs)-1}].")
+
+        fq = qubitIFs[qi]
+        if ax is not None:
+            ax.plot([fq/1e6], [argZ[qi]], '.', color='r')
+        return fq
 
 
 class QMQubitSpecThreeTone (QMProgram):
@@ -1564,9 +1610,9 @@ class QMPowerRabi (QMProgram):
         self.qmprog = prog
         return prog
 
-    def cosine(amp, period, a, bkg_slope, bkg_offs):
+    def cosine(amp, period, a, decay, bkg_slope, bkg_offs):
         """Cosine function with background offset and slope to use for fitting."""
-        return a * np.cos(2*np.pi * amp / period) + bkg_slope * amp + bkg_offs
+        return a * np.cos(2*np.pi * amp / period) * np.exp(-amp/decay) + bkg_slope * amp + bkg_offs
 
     def fit_cosine(
             self, result=None, ax=None, period0=0.05, plotp0=False,
@@ -1584,12 +1630,13 @@ class QMPowerRabi (QMProgram):
         p0 = self.last_p0 = [
             period0, # period
             maxmin/2.5, # amplitude
+            max(amps)/2, # decay
             0, # bkg slant
             np.mean(argZ) # bkg offset
         ]
         bounds = (
-            [0, 0, -np.inf, np.min(argZ)],
-            [np.max(amps)*2, maxmin/2, np.inf, np.max(argZ)])
+            [amps[2]-amps[0], 0, 0, -np.inf, np.min(argZ)],
+            [np.max(amps)*2, maxmin/2, np.inf, np.inf, np.max(argZ)])
         print(p0)
         print(bounds)
         popt, pcov = curve_fit(
@@ -1598,7 +1645,7 @@ class QMPowerRabi (QMProgram):
         if printinfo:
             res = [ufloat(opt, err) for opt, err in zip(popt, perr)]
             print("  Fit cosine to Power Rabi data")
-            for r, name in zip(res, ["period", "ampl", "slope", "offset"]):
+            for r, name in zip(res, ["period", "ampl", "decay", "slope", "offset"]):
                 print(f"    {name:6s} {r}")
         if ax:
             ax.plot(amps, func(amps, *popt), '-', **pltkw)
