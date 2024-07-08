@@ -34,7 +34,7 @@ import qm.octave as octave
 
 from helpers import data_path, mpl_pause, plt2dimg, plt2dimg_update, DurationEstimator
 
-import configuration as config
+import configuration_vna as config
 import qminit
 
 qmm = qminit.connect()
@@ -75,7 +75,7 @@ SETTLING_TIME = 0.1  # seconds
 importlib.reload(config)
 importlib.reload(qminit)
 
-print("Running calibration...")
+print("Running calibration on vna output...")
 qm = qmm.open_qm(config.qmconfig)
 qminit.octave_setup_vna(qm, config)
 cal = qm.octave.calibrate_element('vna', [(config.vnaLO, config.vnaIF)])
@@ -90,33 +90,50 @@ cal = qm.octave.calibrate_element('vna', [(config.vnaLO, config.vnaIF)])
 # qm = qmm.open_qm(config.qmconfig)
 # qminit.octave_setup_vna(qm, config)
 # job = qm.execute(mixer_cal_vna)
+#%%
+
+importlib.reload(config)
+importlib.reload(qminit)
+
+print("Running calibration on resonator output...")
+qm = qmm.open_qm(config.qmconfig)
+qminit.octave_setup_resonator(qm, config)
+cal = qm.octave.calibrate_element('resonator', [(config.resonatorLO, config.resonatorIF)])
 
 #%%
 
 importlib.reload(config)
 importlib.reload(qminit)
 
+element = 'resonator'
 filename = '{datetime}_qm_JPA_pump_power_vs_pump_freq_vs_Iflux'
 fpath = data_path(filename, datesuffix='_qm')
 
-#Iflux = np.array([-0.06e-3, -0.058e-3, -0.054e-3, -0.052e-3, -.050e-3, -.048e-3, -.044e-3, -.040e-3, -.035e-3, -.030e-3, -.025e-3]) # A
-#Iflux = np.array([-0.06e-3, -0.058e-3, -0.054e-3, -0.052e-3, -.050e-3, -.048e-3, -.044e-3, -.040e-3, -.035e-3, -.030e-3, -.025e-3, -.02e-3, -.01e-3, 0, 0.02e-3, 0.03e-3]) # A
-#Iflux = np.array([-0.052e-3, -.050e-3, -.025e-3]) # A
-Iflux = np.array([-0.204e-3, -0.2e-3, -0.19e-3, -0.18e-3, -0.15e-3, -0.1e-3, -0.05e-3, 0e-3]) # A
-fsignal = config.vnaLO + config.vnaIF
+#Iflux = np.array([0e-3, 0.01e-3, 0.02e-3, 0.025e-3, 0.027e-3, 0.03e-3, 0.032e-3]) # A
+#Iflux = np.array([0.023e-3, 0.024e-3, 0.025e-3, 0.026e-3, 0.027e-3, 0.028e-3, 0.029e-3, 0.03e-3]) # A
+Iflux = np.array([0.025e-3, 0.026e-3]) # A
+if element == 'vna':
+    fsignal = config.vnaLO + config.vnaIF
+else:
+    fsignal = config.resonatorLO + config.resonatorIF
 
 Navg = 100
-fpump = np.arange(10e9, 13e9, 5e6)
-Ppump = np.arange(-20, 0, 1)
+fpump = np.arange(9.5e9, 11.5e9, 5e6)
+fpump = np.arange(10.3e9, 10.7e9, 1e6)
+fpump = np.arange(10.44e9, 10.54e9, 0.4e6)
+Ppump = np.arange(-17, -10, 0.2)
 
 # Ramp to flux
 assert np.all(np.abs(Iflux[0]) < 1e-3) # Limit 1mA thermocoax
+if fluxbias.current() > Iflux[0]:
+    print("Hysteresis, start from Iflux=0mA")
+    fluxbias.ramp_current(0, FLUXRAMP_STEP, FLUXRAMP_STEPTIME)
 print(f"Setting flux current ({abs(fluxbias.current()-Iflux[0])/FLUXRAMP_STEP*FLUXRAMP_STEPTIME/60:.1f}min)")
 fluxbias.ramp_current(Iflux[0], FLUXRAMP_STEP, FLUXRAMP_STEPTIME)
 time.sleep(2) # settle
 
 # Define program using settings above
-with qua.program() as vna:
+with qua.program() as vnaprog:
     nPpump = qua.declare(int)
     nfpump = qua.declare(int)
     n = qua.declare(int)
@@ -130,8 +147,8 @@ with qua.program() as vna:
     # First run for reference line
     with qua.for_(n, 0, n < Navg, n + 1):
         # qua.wait(config.cooldown_clk, 'vna') # not really necessary, VNA is CW measurement
-        qua.wait(rand.rand_int(50)+4, 'vna')
-        qua.measure('readout', 'vna', None,
+        qua.wait(rand.rand_int(50)+4, element)
+        qua.measure('readout', element, None,
                     qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
                     qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
         qua.save(I, I_st)
@@ -142,8 +159,8 @@ with qua.program() as vna:
             qua.pause()
             with qua.for_(n, 0, n < Navg, n + 1):
                 # qua.wait(config.cooldown_clk, 'vna') # not really necessary, VNA is CW measurement
-                qua.wait(rand.rand_int(50)+4, 'vna')
-                qua.measure('readout', 'vna', None,
+                qua.wait(rand.rand_int(50)+4, element)
+                qua.measure('readout', element, None,
                             qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
                             qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
                 qua.save(I, I_st)
@@ -182,11 +199,18 @@ axs[-1,0].set_xlabel('Pump freq / GHz')
 for k, I in enumerate(Iflux):
     axs[k//ncols,k%ncols].set_title(f"Iflux {I*1e3:.5f} mA", fontsize=10)
 readoutpower = 10*np.log10(config.readout_amp**2 * 10) # V to dBm
-title = (
-    f"signal {config.vnaLO/1e9:.5f}GHz+{config.vnaIF/1e6:.3f}MHz   Navg {Navg}"
-    f"\n{config.readout_len/1e3}us readout at {readoutpower:.1f}dBm{config.vna_output_gain:+.1f}dB"
-    f",   {config.input_gain:+.1f}dB input gain"
-    "\nColorbar:  Gain  S/Sref  [dB]")
+if element == 'vna':
+    title = (
+        f"signal {config.vnaLO/1e9:.5f}GHz+{config.vnaIF/1e6:.3f}MHz   Navg {Navg}"
+        f"\n{config.readout_len/1e3}us readout at {readoutpower:.1f}dBm{config.vna_output_gain:+.1f}dB"
+        f",   {config.input_gain:+.1f}dB input gain"
+        "\nColorbar:  Gain  S/Sref  [dB]")
+else:
+    title = (
+        f"signal {config.resonatorLO/1e9:.5f}GHz+{config.resonatorIF/1e6:.3f}MHz   Navg {Navg}"
+        f"\n{config.readout_len/1e3}us readout at {readoutpower:.1f}dBm{config.resonator_output_gain:+.1f}dB"
+        f",   {config.input_gain:+.1f}dB input gain"
+        "\nColorbar:  Gain  S/Sref  [dB]")
 fig.suptitle(title, fontsize=10)
 fig.show()
 
@@ -201,8 +225,11 @@ try:
 
         # Start QM program
         qm = qmm.open_qm(config.qmconfig)
-        qminit.octave_setup_vna(qm, config)
-        job = qm.execute(vna)
+        if element == 'vna':
+            qminit.octave_setup_vna(qm, config)
+        else:
+            qminit.octave_setup_resonator(qm, config)
+        job = qm.execute(vnaprog)
 
         # Prepare plot
         imgs[k] = plt2dimg(
@@ -296,7 +323,7 @@ finally:
     fig.savefig(fpath+'.png', dpi=300)
 
     rfsource.write_str_with_opc(":output off")
-    qm.octave.set_rf_output_mode('vna', octave.RFOutputMode.off)
+    qm.octave.set_rf_output_mode(element, octave.RFOutputMode.off)
 
     # Plot SNR
     refsnr = np.nanmean(np.abs(refsignal)) / np.sqrt(np.nanmean(refsignalvar.real + refsignalvar.imag))
@@ -314,11 +341,18 @@ finally:
             norm=CenteredNorm(vcenter=refsnr), cmap='coolwarm')
         fig.colorbar(imgs[k], ax=axs[k//ncols,k%ncols], orientation='horizontal', shrink=0.8)
     readoutpower = 10*np.log10(config.readout_amp**2 * 10) # V to dBm
-    title = (
-        f"signal {config.vnaLO/1e9:.5f}GHz+{config.vnaIF/1e6:.3f}MHz   Navg {Navg}"
-        f"\n{config.readout_len/1e3}us readout at {readoutpower:.1f}dBm{config.vna_output_gain:+.1f}dB"
-        f",   {config.input_gain:+.1f}dB input gain"
-        f"\nColorbar:  amplitude SNR; Pump off SNR {refsnr:.1e}")
+    if element == 'vna':
+        title = (
+            f"signal {config.vnaLO/1e9:.5f}GHz+{config.vnaIF/1e6:.3f}MHz   Navg {Navg}"
+            f"\n{config.readout_len/1e3}us readout at {readoutpower:.1f}dBm{config.vna_output_gain:+.1f}dB"
+            f",   {config.input_gain:+.1f}dB input gain"
+            f"\nColorbar:  amplitude SNR; Pump off SNR {refsnr:.1e}")
+    else:
+        title = (
+            f"signal {config.resonatorLO/1e9:.5f}GHz+{config.resonatorIF/1e6:.3f}MHz   Navg {Navg}"
+            f"\n{config.readout_len/1e3}us readout at {readoutpower:.1f}dBm{config.resonator_output_gain:+.1f}dB"
+            f",   {config.input_gain:+.1f}dB input gain"
+            f"\nColorbar:  amplitude SNR; Pump off SNR {refsnr:.1e}")
     fig.suptitle(title, fontsize=10)
     fig.savefig(fpath+'_snr.png', dpi=300)
 

@@ -24,22 +24,16 @@ qmm = qminit.connect()
 
 #%%
 
-from qcodes.instrument_drivers.yokogawa.GS200 import GS200
+from instruments.basel import BaselDACChannel
 
-try:
-    fluxbias.close()
-    pass
-except: pass
+flux = BaselDACChannel(3)
 
-fluxbias = GS200("source", 'TCPIP0::169.254.0.2::inst0::INSTR', terminator="\n")
-assert fluxbias.source_mode() == 'CURR'
-assert fluxbias.output() == 'on'
+assert flux.get_state(), "Basel channel not ON"
+print("CH", flux.channel, ":", flux.get_voltage(), "V")
 
-# min step 1e-5 mA = 1e-8 A
-FLUXRAMP_STEP = 5e-8 # A
-FLUXRAMP_STEPTIME = 0.05 # s
-SETTLING_TIME = 0.1 # s
-FLUX_MAXJUMP = 2e-4 # A
+FLUX_BIAS_R = 10e3 # Ohm
+FLUXRAMP_STEP_V = 1e-8 * FLUX_BIAS_R
+FLUXRAMP_STEPTIME = 0.02
 
 #%% Calibration
         
@@ -70,15 +64,18 @@ importlib.reload(qminit)
 filename = '{datetime}_qm_vna_vs_flux_test'
 fpath = data_path(filename, datesuffix='_qm')
 
-Iflux = np.concatenate([np.linspace(-0.5e-3, 0.1e-3, 601)])
+Iflux = np.concatenate([np.linspace(0.15e-3, -0.5e-3, 651)])
 I_step = np.mean(np.abs(np.diff(Iflux)))
 print(f"Iflux measurement step: {I_step*1e3:.5f}mA avg")
 Nflux = Iflux.size
 
+Vflux = Iflux * FLUX_BIAS_R
+
 assert np.all(np.abs(Iflux) < 1e-3) # Limit 1mA thermocoax
 assert np.all(np.abs(Iflux) < 0.51e-3) # Limit to JPA flux period * 0.6
+assert np.all(np.abs(Vflux) < 10)
 
-Navg = 300
+Navg = 100
 
 freqs = np.arange(-402e6, 402e6, 4e6)
 Nf = len(freqs)
@@ -114,8 +111,8 @@ with qua.program() as vna:
         Q_st.buffer(Navg, len(freqs)).map(qua.FUNCTIONS.average(0)).save_all('Q')
 
 
-print(f"Setting flux current ({abs(fluxbias.current()-Iflux[0])/FLUXRAMP_STEP*FLUXRAMP_STEPTIME/60:.1f}min)")
-fluxbias.ramp_current(Iflux[0], FLUXRAMP_STEP, FLUXRAMP_STEPTIME)
+print(f"Setting flux current ({abs(flux.get_voltage()-Vflux[0])/FLUXRAMP_STEP_V*FLUXRAMP_STEPTIME/60:.1f}min)")
+flux.ramp_voltage(Vflux[0], FLUXRAMP_STEP_V, FLUXRAMP_STEPTIME)
 print("Wait for flux current to settle")
 time.sleep(2)
 
@@ -147,7 +144,8 @@ title = (
     f"LO={config.vnaLO/1e9:.5f}GHz   Navg {Navg}"
     f"   electric delay {config.VNA_PHASE_CORR:.3e}rad/Hz"
     f"\n{config.readout_len}ns readout at {readoutpower:.1f}dBm{config.vna_output_gain:+.1f}dB"
-    f",   {config.input_gain:+.1f}dB input gain")
+    f",   {config.input_gain:+.1f}dB input gain"
+    f"\nFlux via Basel DC source, R={FLUX_BIAS_R:.1e}Ohm")
 fig.suptitle(title, fontsize=10)
 fig.show()
 
@@ -156,7 +154,7 @@ estimator = DurationEstimator(Nflux)
 try:
     for i in range(Nflux):
         tstart = time.time()
-        fluxbias.ramp_current(Iflux[i], FLUXRAMP_STEP, FLUXRAMP_STEPTIME)
+        flux.ramp_voltage(Vflux[i], FLUXRAMP_STEP_V, FLUXRAMP_STEPTIME)
         tflux.append(time.time()-tstart)
         tracetime[i] = time.time()
 
@@ -185,7 +183,8 @@ finally:
     except:
         pass
     np.savez_compressed(
-        fpath, Navg=Navg, f=freqs, dataS21=dataS21, Iflux=Iflux,
+        fpath, Navg=Navg, f=freqs, dataS21=dataS21, Iflux=Iflux, Vflux=Vflux,
+        FLUX_BIAS_R=FLUX_BIAS_R,
         config=config.meta)
     print("Time per trace:", (np.nanmax(tracetime)-np.nanmin(tracetime))/np.count_nonzero(~np.isnan(tracetime)), 's')
     print("Time for flux set:", np.mean(tflux), "s")

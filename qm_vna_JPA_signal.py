@@ -16,7 +16,7 @@ from qualang_tools.loops import from_array
 
 from helpers import data_path, mpl_pause
 
-import configuration as config
+import configuration_vna as config
 import qminit
 
 qmm = qminit.connect()
@@ -82,9 +82,10 @@ importlib.reload(qminit)
 filename = '{datetime}_qm_JPA_signal'
 fpath = data_path(filename, datesuffix='_qm')
 
-ifs = np.arange(-402e6, 402e6, 4e6)
+ifs = np.arange(-402e6, 402e6, 1e6)
 Navg = 200
 
+Iflux = fluxbias.current()
 pumpmeta = {
     'f': float(rfsource.query(':source:freq?')),
     'power': float(rfsource.query(':source:power?')),
@@ -164,7 +165,7 @@ S = Z[1] / Z[0]
 # Save
 np.savez_compressed(
     fpath, Navg=Navg, ifs=ifs, fs=fs, Zraw=Zraw, Z=Z, S=S,
-    pumpmeta=pumpmeta,
+    pumpmeta=pumpmeta, Iflux=Iflux,
     config=config.meta)
 
 # Plot
@@ -179,6 +180,7 @@ title = (
     f"LO={config.vnaLO/1e9:.5f}GHz   Navg {Navg}"
     f"   electric delay {config.VNA_PHASE_CORR:.3e}rad/Hz"
     f"\n{config.readout_len}ns readout at {readoutpower:.1f}dBm{config.vna_output_gain:+.1f}dB"
-    f",   {config.input_gain:+.1f}dB input gain")
+    f",   {config.input_gain:+.1f}dB input gain"
+    f"\nIflux {Iflux*1e3:.5}mA  Pump {pumpmeta['f']/1e9:.5f}GHz {pumpmeta['power']:+.1}dBm")
 fig.suptitle(title, fontsize=10)
 fig.savefig(fpath+'.png')
