@@ -45,6 +45,19 @@ def octave_setup_resonator(qm, config, short_readout_gain=False):
         if_mode_i=octave.IFMode.direct, if_mode_q=octave.IFMode.direct
     )
 
+def octave_setup_vna(qm, config):
+    element = 'vna'
+    outgain = config.vna_output_gain
+    qm.octave.set_lo_source(element, octave.OctaveLOSource.Internal)
+    qm.octave.set_lo_frequency(element, config.vnaLO)
+    qm.octave.set_rf_output_gain(element, outgain)
+    qm.octave.set_rf_output_mode(element, octave.RFOutputMode.on)
+
+    qm.octave.set_qua_element_octave_rf_in_port(element, "octave1", 1)
+    qm.octave.set_downconversion(
+        element, lo_source=octave.RFInputLOSource.Internal, lo_frequency=config.vnaLO,
+        if_mode_i=octave.IFMode.direct, if_mode_q=octave.IFMode.direct
+    )
 
 def octave_setup_qubit(qm, config):
     element = 'qubit'
