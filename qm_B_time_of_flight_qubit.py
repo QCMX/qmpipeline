@@ -19,10 +19,10 @@ qmm = qminit.connect()
 importlib.reload(config)
 importlib.reload(qminit)
 
-filename = '{datetime}_qm_time_of_flight'
+filename = '{datetime}_qm_time_of_flight_qubit'
 fpath = data_path(filename, datesuffix='_qm')
 
-Navg = 1000
+Navg = 100
 
 with qua.program() as tof_cal:
     n = qua.declare(int)  # variable for averaging loop
@@ -34,9 +34,11 @@ with qua.program() as tof_cal:
 
     with qua.for_(n, 0, n < Navg, n + 1):
         qua.reset_phase('resonator') # reset the phase of the next played pulse
+        qua.reset_phase('qubit') # reset the phase of the next played pulse
         #qua.play('preload', 'resonator')
-        #qua.play('saturation', 'qubit')
-        qua.measure('readout', 'resonator', adc_st)
+        qua.align()
+        qua.play('const', 'qubit')
+        qua.measure('readout'*qua.amp(0), 'resonator', adc_st)
         qua.wait(config.cooldown_clk, 'resonator')  # wait for photons in resonator to decay
         qua.save(n, n_st)
 
@@ -119,12 +121,15 @@ else:
     axs[1].set_ylabel('ADC units')
     axs[-1].set_xlabel('sample (ns)')
     readoutpower = 10*np.log10(config.readout_amp**2 * 10) # V to dBm
+    constpower = 10*np.log10(config.const_amp**2 * 10)
     fig.suptitle(
-        f"LO={config.resonatorLO/1e9:.5f}GHz   IF={config.resonatorIF/1e6:.3f}MHz"
+        f"TOF qubit \n LO={config.resonatorLO/1e9:.5f}GHz   IF={config.resonatorIF/1e6:.3f}MHz"
         f"   Cooldown {config.cooldown_clk*4}ns   Navg {Navg}"
-        f"\n{config.readout_len}ns readout at {readoutpower:.1f}dBm{config.resonator_output_gain:+.1f}dB"
+        f"\n{config.readout_len}ns readout at 0dB ("
         f",   {config.resonator_input_gain:+.1f}dB input gain"
-        f"\n{config.qmconfig['elements']['resonator']['smearing']}ns smearing", fontsize=10)
+        f"\n{config.const_len}ns const pulse at {constpower:.1f}dBm{config.qubit_output_gain:+.1f}dB"
+        f"\nreadout: {config.qmconfig['elements']['resonator']['smearing']}ns smearing, "
+        f" {config.qmconfig['elements']['resonator']['time_of_flight']}ns TOF", fontsize=10)
     fig.tight_layout()
     fig.savefig(fpath+'.png')
 
@@ -159,9 +164,9 @@ def cavity_load(t, fIF, lifetime, t0, amp, offs, phase):
     env[t<t0] = 0
     return offs + env * np.sin(2*np.pi * t * fIF + phase)
 
-t = np.arange(adc1.size) / 1e3 # us
-p0 = [config.resonatorIF/1e6, 0.5, 250/1e3, 50, np.mean(adc1), 0]
-popt, pcov = curve_fit(cavity_load, t, adc1, p0=p0)
+t = np.arange(adc1_single_run.size) / 1e3 # us
+p0 = [config.qubitIF/1e6, 0.5, 0, 2000, np.mean(adc1_single_run), 0]
+popt, pcov = curve_fit(cavity_load, t, adc1_single_run, p0=p0)
 
 res = [ufloat(opt, err) for opt, err in zip(popt, np.sqrt(np.diag(pcov)))]
 for r, name, unit in zip(res, ["fIF", "lifet", "t0", "amp", "offs", "phase"], ["MHz", "us", "us", "ADC", "ADC", "rad"]):
@@ -169,15 +174,16 @@ for r, name, unit in zip(res, ["fIF", "lifet", "t0", "amp", "offs", "phase"], ["
 
 tsuper = np.linspace(t[0], t[-1], t.size*10)
 fig, axs = plt.subplots(nrows=2, sharex=True)
-axs[0].plot(t, adc1, label='data', zorder=3)
+axs[0].plot(t, adc1_single_run, label='data', zorder=3)
 #axs[0].plot(t, cavity_load(t, *p0), 'k--')
 axs[0].plot(tsuper, cavity_load(tsuper, *popt), 'k-', linewidth=0.8, label='fit', zorder=2)
+axs[0].plot(tsuper, cavity_load(tsuper, *p0), 'k-', linewidth=0.8, label='fit', zorder=2)
 axs[0].axvline(popt[2], color='C2', label=f't0={res[2]*1e3}ns')
 axs[0].axvline(popt[2]+popt[1], color='C3', label=f'lifet={res[1]}us')
 axs[0].fill_between([t[0], t[-1]], [popt[4]-popt[3], popt[4]-popt[3]], [popt[4]+popt[3], popt[4]+popt[3]], alpha=0.1, zorder=-1)
 axs[0].legend(fontsize=8)
 axs[0].set_ylabel('ADC1 / ADC units')
-axs[1].plot(t, adc1 - cavity_load(t, *popt))
+axs[1].plot(t, adc1_single_run - cavity_load(t, *popt))
 axs[1].set_ylabel('residuals')
 axs[1].set_xlabel('time / us')
 fig.tight_layout()

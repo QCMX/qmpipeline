@@ -14,7 +14,7 @@ import qm.qua as qua
 
 from helpers import data_path, mpl_pause, DurationEstimator, plt2dimg, plt2dimg_update
 
-import configuration as config
+import configuration_novna as config
 import qminit
 
 qmm = qminit.connect()
@@ -39,9 +39,7 @@ importlib.reload(qminit)
 filename = '{datetime}_qm_resonator_vs_gate'
 fpath = data_path(filename, datesuffix='_qm')
 
-Vgate = np.concatenate([np.linspace(-5.35, -5.2, int(6e3)+1)])
-Vgate = np.concatenate([np.linspace(-5.26, -5.28, int(1e3)+1)])
-Vgate = np.concatenate([np.linspace(-5.1, -5.4, int(6e3)+1)])
+Vgate = np.concatenate([np.linspace(-3.9, -4.2, int(6e3)+1)])
 Vstep = np.mean(np.abs(np.diff(Vgate)))
 print(f"Vgate measurement step: {Vstep*1e6:.1f}uV avg")
 Ngate = Vgate.size
@@ -52,8 +50,8 @@ assert Vstep > 1.19e-6, "Vstep smaller than Basel resolution"
 # gate.ramp_voltage(Vhyst, 2*GATERAMP_STEP, GATERAMP_STEPTIME)
 
 Navg = 50
-f_min = 205e6
-f_max = 208e6
+f_min = 199e6
+f_max = 212e6
 df = 0.05e6
 freqs = np.arange(f_min, f_max + df/2, df)  # + df/2 to add f_max to freqs
 Nf = len(freqs)
@@ -167,12 +165,12 @@ finally:
     fig.tight_layout()
     # fig.savefig(fpath+'.png', dpi=300)
 
-    arg = np.unwrap(np.unwrap(np.angle(dataS21), axis=1), axis=0)
+    Zcorr = dataS21 * np.exp(1j * freqs * config.PHASE_CORR) / config.readout_len * 2**12
 
     fig, axs = plt.subplots(nrows=2, sharex=True, sharey=True, layout='constrained')
     img = plt2dimg(axs[0], Vgate, freqs/1e6, 10*np.log10(np.abs(dataS21)**2 * 10))
     fig.colorbar(img, ax=axs[0]).set_label("|S| / dBm")
-    img = plt2dimg(axs[1], Vgate, freqs/1e6, arg)
+    img = plt2dimg(axs[1], Vgate, freqs/1e6, np.angle(Zcorr), cmap='twilight', vmin=-np.pi, vmax=np.pi)
     fig.colorbar(img, ax=axs[1]).set_label("arg S")
     axs[0].set_ylabel('resonator IF / MHz', fontsize=6)
     axs[1].set_ylabel('resonator IF / MHz', fontsize=6)
@@ -195,7 +193,7 @@ plt.plot(dat['Vgate'], np.angle(dat['dataS21'])[:,fidx])
 #Shuttle
 Vtarget = 0
 
-step = 30e-6
+step = 2e-6
 steptime = 0.02
 print("Ramp time:", np.abs(Vtarget - gate.get_voltage()) / step * steptime / 60, "min")
 gate.ramp_voltage(Vtarget, step, steptime)

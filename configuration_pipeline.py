@@ -34,24 +34,24 @@ qubit_output_gain     = -10 # Octave RF2, range -20 to +20dB
 adcoffset = np.array([0.057299890319824215 , 0.07062872677001952])
 
 ## Frequencies
-resonatorLO = 4.8500e9
-resonatorIF = 0.2064e9
+resonatorLO = 5.010e9
+resonatorIF = 0.202e9
 # 20ns readout -> 200MHz IF
 # 50ns readout -> 100MHz IF
 
-qubitLO = 3.0e9
+qubitLO = 3.5e9
 qubitIF = -150e6
 
 # For resonator width 450kHz width, ie. t=2us lifetime
 # choose at least 6us=3t, ie. 1500cycles
-cooldown_clk = 4000 # 4ns cycles
+cooldown_clk = 4000 # cycles
 
 ## Readout pulse parameters
 const_len = 10000
-const_amp = 0.1 #0.316
+const_amp = 0.316
 
 readout_len = 20000 # ns
-readout_amp = 0.0316
+readout_amp = 0.0056
 
 short_readout_len = 1000 # ns
 short_readout_amp = 0.316

@@ -349,6 +349,11 @@ class QMMixerCalibration (QMProgram):
         print("Running calibration on resonator channel...")
         rcal = qm.octave.calibrate_element(
             'resonator', [(self.config['resonatorLO'], self.config['resonatorIF'])])
+        print(rcal)
+        rcal = list(rcal.values())[0].__dict__
+        if rcal['correction'] == [1, 0, 0, 1]:
+            warnings.warn(f"Resonator calibration LO {self.config['resonatorLO']/1e9:f}GHz IF{self.config['resonatorIF']/1e6:f}MHz failed (result is identity matrix).")
+
         qubitLOs = list(self.params['qubitLOs'])
         if self.config['qubitLO'] not in qubitLOs:
             qubitLOs.append(self.config['qubitLO'])
@@ -356,8 +361,13 @@ class QMMixerCalibration (QMProgram):
         qcal = []
         for lof in qubitLOs:
             qm.octave.set_lo_frequency('qubit', lof)
-            qcal.append(qm.octave.calibrate_element(
-                'qubit', [(lof, self.config['qubitIF'])]))
+            cal = qm.octave.calibrate_element(
+                'qubit', [(lof, self.config['qubitIF'])])
+            print(cal)
+            cal = list(cal.values())[0].__dict__
+            if cal['correction'] == [1, 0, 0, 1]:
+                warnings.warn(f"Qubit calibration LO {lof/1e9:f}GHz IF{self.config['qubitIF']/1e6:f}MHz failed (result is identity matrix).")
+            qcal.append(cal)
         return {'resonator': rcal, 'qubit': qcal} | self.params | {'config': self.config}
 
     def run_after_interval(self, interval):

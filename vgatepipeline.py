@@ -1,0 +1,117 @@
+# -*- coding: utf-8 -*-
+
+import numpy as np
+import matplotlib.pyplot as plt
+from functools import reduce
+
+from helpers import plt2dimg
+
+class VgatePipeline:
+    def __init__(self, fpath):
+        self.data = np.load(fpath, allow_pickle=True)
+        self.results = self.data['results'][()]
+        self.Vgate = self.data['Vgate']
+
+    def get_Vgate(self):
+        return self.Vgate
+
+    def non_empty_result_keys(self):
+        """List all result keys for which at least one gate point contains data.
+        The mixer_calibration is excluded, as it doesn't produce data.
+
+        Returns
+        -------
+        List of str
+        """
+        return [
+            k for k, v in self.results.items()
+            if not all(r is None for r in v) and not k == 'mixer_calibration']
+
+    def get_shared_value(self, resultkey, variablekey):
+        """
+        Return value of a variable in a result if it is the same for all results of that key.
+        Otherwise raises exception.
+
+        None if all results with that key are None.
+        """
+        self.results[resultkey] # check whether present
+        try:
+            values = [
+                res[variablekey] for res in self.results[resultkey]
+                if res is not None]
+        except KeyError:
+            raise Exception(f"{variablekey} not present in all results of {resultkey}")
+        if len(values) == 0:
+            return None
+        if not all(np.allclose(values[i], values[0]) for i in range(1, len(values))):
+            raise Exception(f"{variablekey} in {resultkey} does not have the same value for all gate points")
+        else:
+            return values[0]
+
+    def get_shared_config_value(self, resultkey, configpath: list):
+        self.results[resultkey]
+        values = [reduce(lambda d, k: d[k], configpath, res['config'])
+                  for res in self.results[resultkey]
+                  if res is not None]
+        if len(values) == 0:
+            return None
+        if not all(v == values[0] for v in values[1:]):
+            raise Exception(f"value at {repr(configpath)} not the same for all gate points in config result {resultkey}")
+        return values[0]
+
+    def get_value_as_array(self, resultkey, variablekey):
+        """
+        Return all values of a variable in a result stacked along first axis.
+        First axis has length of Vgate.
+        """
+        self.results[resultkey] # check whether present
+        values = [
+            res[variablekey] if res is not None else np.nan
+            for res in self.results[resultkey]]
+        shapes = [v.shape for v in values if v is not np.nan]
+        if len(shapes) == 0:
+            return None
+        if not all(s == shapes[0] for s in shapes[1:]):
+            raise Exception(f"data in variable {variablekey} in result {resultkey} does not have the same shape for all gate points")
+        values = [np.broadcast_to(v, shapes[0]) for v in values]
+        return np.stack(values)
+
+    def plot_Vgate_2tone_multi(self, keys=None, npowers=3, **figkwargs):
+        """Make overview figure with data from multiple 2tone results.
+
+        Requires same drive IFs & LO for all gate points for each result key.
+
+        If no keys are given will plot all 2tone spectroscopy results.
+        """
+        if keys is None:
+            ks = self.non_empty_result_keys()
+            keys = [k for k in ks if k == 'qubit_P2' or k.startswith('qubit_P2:')]
+        fig, axs = plt.subplots(nrows=len(keys)+1, ncols=npowers, sharex=True, layout='constrained', **figkwargs)
+        # plot cavity
+        S21 = self.get_value_as_array('resonator', 'Z')
+        ifs = self.get_shared_value('resonator', 'resonatorIFs')
+        for j in range(npowers):
+            im = plt2dimg(axs[0,j], self.Vgate, ifs/1e6, np.abs(S21))
+            if j > 0: axs[0,j].sharey(axs[0,0])
+        fig.colorbar(im, ax=axs[0,-1], label='|S21|')
+        axs[0,0].set_ylabel("readout IF / MHz", fontsize=8)
+        axs[0,npowers//2].set_title("Cavity, no drive", fontsize=8)
+        # plot
+        for i, key in enumerate(keys):
+            qlo = self.get_shared_config_value(key, ['qubitLO'])
+            qfs = self.get_shared_value(key, 'qubitIFs') + qlo
+            p2s = self.get_shared_value(key, 'drive_power') # (Vgate, f2, P2)
+            Z = self.get_value_as_array(key, 'Z')
+            idxs = [int(len(p2s)/max(2,npowers-1)*k) for k in range(npowers)][:-1] + [-1]
+            for j, p2idx in enumerate(idxs):
+                argZ = np.unwrap(np.unwrap(np.angle(Z[:,:,p2idx]), axis=0))
+                argZ -= np.nanmedian(argZ, axis=1)[:,None]
+                argZ = (argZ+np.pi)%(2*np.pi)-np.pi # constrain to -pi to +pi
+                im = plt2dimg(axs[i+1, j], self.Vgate, qfs/1e9, argZ)
+                if j > 0:
+                    axs[i+1,j].sharey(axs[i+1,0])
+                fig.colorbar(im, ax=axs[i+1,j])#, label="arg Z - <arg Z>_f2", fs=8)
+                axs[i+1,j].set_title(f"P2 = {p2s[p2idx]:+.1f}dBm", fontsize=8)
+            axs[i+1,0].set_ylabel(f"{key}\nf2 / GHz", fontsize=8)
+        axs[-1,npowers//2].set_xlabel("Vgate / V")
+        return fig

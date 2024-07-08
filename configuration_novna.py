@@ -6,10 +6,9 @@ import numpy as np
 # Use as Zcorr = Z * np.exp(1j * freqs * config.PHASE_CORR).
 # Alors, should be 2*pi*time_of_flight = 1.70e-6 (roughly the same),
 # except for additional phase slope from microwave environment.
-PHASE_CORR = 1.6239384827049928e-06
-VNA_PHASE_CORR = PHASE_CORR
+PHASE_CORR = 1.88779e-06
 
-## Note:
+# Note:
 # OPX outputs have 16bits, ie. 1V/2**16 =  15uV resolution
 # OPX inputs  have 12bits, ie. 1V/2**12 = 244uV resolution
 
@@ -24,38 +23,33 @@ VNA_PHASE_CORR = PHASE_CORR
 #  10.0mV = -30dBm
 #   3.16mV = -40dBm
 
-## OPX analog input gain
-input_gain  = +15 # OPX IN, range -12 to +20dB
-
-## Octave output parameters
+# Octave parameters
 resonator_output_gain = -20 # Octave RF1, range -20 to +20dB
-vna_output_gain = -20 # Octave RF1, range -20 to +20dB
-qubit_output_gain = -10 # Octave RF2, range -20 to +20dB
+resonator_input_gain  = +15 # OPX IN, range -12 to +20dB
+qubit_output_gain     = 0 # Octave RF2, range -20 to +20dB
 
-## ADC offset in Volts
+# ADC offset in Volts
 adcoffset = np.array([0.0572889, 0.0706217])
 
 ## Frequencies
-resonatorLO = 4.850e9
-resonatorIF = 0.206e9
+resonatorLO = 5.01e9
+# bareIF = 201.55e6
+resonatorIF = 0.20146e9 # 0.20577e9 # 0.2058e9
 # 20ns readout -> 200MHz IF
 # 50ns readout -> 100MHz IF
 
-qubitLO = 2e9
+qubitLO = 5.36114e9
 qubitIF = -150e6#-380e6
-
-vnaLO = 5.95e9
-vnaIF = 0.104e9
 
 # For resonator width 450kHz width, ie. t=2us lifetime
 # choose at least 6us=3t, ie. 1500cycles
-cooldown_clk = 1000 # 4ns cycles
+cooldown_clk = 6000 # 4ns cycles
 
 ## Readout pulse parameters
-const_len = 10000
-const_amp = 0.01#316
+const_len = 20000
+const_amp = 0.1
 
-readout_len = 100000 # 52 # ns
+readout_len = 20000 # 52 # ns
 readout_amp = 0.01
 
 short_readout_len = 20000 # ns
@@ -132,21 +126,19 @@ qmconfig = {
             'type': 'opx1',
 
             'analog_outputs': {
-                1: {'offset': 0.0},  # I vna probe
-                2: {'offset': 0.0},  # Q vna probe
-                3: {'offset': 0.0},  # I qubit drive
-                4: {'offset': 0.0},  # Q qubit drive
-                7: {'offset': 0.0},  # I resonator
-                8: {'offset': 0.0},  # Q resonator
-
+                3: {'offset': 0.0},  # I resonator
+                4: {'offset': 0.0},  # Q resonator
+                5: {'offset': 0.0},  # Q resonator
+                7: {'offset': -0.03259},  # I resonator
+                8: {'offset': -0.04925},  # Q resonator
             },
 
             'digital_outputs': {},
 
             'analog_inputs': {
                 # Gain range -12 to +20dB
-                1: {'offset': adcoffset[0], 'gain_db': input_gain},  # I from down conversion
-                2: {'offset': adcoffset[1], 'gain_db': input_gain},  # Q from down conversion
+                1: {'offset': adcoffset[0], 'gain_db': resonator_input_gain},  # I from down conversion
+                2: {'offset': adcoffset[1], 'gain_db': resonator_input_gain},  # Q from down conversion
             },
         },
     },
@@ -177,29 +169,6 @@ qmconfig = {
                 '-Y/2': '-Ypi_half_pulse',
             },
         },
-        
-        'vna': {
-            'mixInputs': {
-                'I': ('con1', 1),
-                'Q': ('con1', 2),
-                'lo_frequency': vnaLO,
-                'mixer': 'octave_octave1_1',
-            },
-            'intermediate_frequency': vnaIF,
-            'operations': {
-                'const': 'const_pulse',
-                'short_readout': 'short_readout_pulse',
-                'readout': 'readout_pulse',
-                'long_readout': 'long_readout_pulse',
-                'preload': 'preload_pulse',
-            },
-            'time_of_flight': time_of_flight,
-            'smearing': 0, # max 127
-            'outputs': {
-                'out1': ('con1', 1),
-                'out2': ('con1', 2),
-            },
-        },
 
         'resonator': {
             'mixInputs': {
@@ -221,6 +190,14 @@ qmconfig = {
             'outputs': {
                 'out1': ('con1', 1),
                 'out2': ('con1', 2),
+            },
+        },
+
+        'flux': {
+            'singleInput': {'port': ('con1', 5)},
+            'operations': {
+                'offset': 'square_pulse',
+                'triangle': 'triangle_pulse',
             },
         },
 
@@ -543,14 +520,6 @@ qmconfig = {
                     "intermediate_frequency": resonatorIF,
                     "lo_frequency": resonatorLO,
                     "correction": (1.0536929927766323, 0.18822958320379257, 0.18970587104558945, 1.045493170619011),
-                },
-            ],
-            
-            "octave_octave1_1": [
-                {
-                    "intermediate_frequency": vnaIF,
-                    "lo_frequency": vnaLO,
-                    "correction": (0., 0., 0., 0.),
                 },
             ],
             

@@ -33,10 +33,10 @@ withdrive = False
 filename = '{datetime}_qm_resonator_vs_power'+('_withdrive' if withdrive else '')
 fpath = data_path(filename, datesuffix='_qm')
 
-Navg = 500
+Navg = 100
 
-f_min = 203e6
-f_max = 210e6
+f_min = 198e6
+f_max = 212e6
 df = 0.05e6
 freqs = np.arange(f_min, f_max + df/2, df)  # + df/2 to add f_max to freqs
 
@@ -44,7 +44,7 @@ freqs = np.arange(f_min, f_max + df/2, df)  # + df/2 to add f_max to freqs
 # a_min = 0.002
 # a_max = 1.0 # relative to readout amplitude
 # amps = np.arange(a_min, a_max + da/2, da)  # + da/2 to add a_max to amplitudes
-amps = np.logspace(np.log10(0.0316), np.log10(1), 101)
+amps = np.logspace(np.log10(0.01), np.log10(1), 101)
 ampsV = amps*config.readout_amp
 
 if withdrive:
@@ -175,12 +175,12 @@ title = (
 
 # 2d maps
 fig, axs = plt.subplots(ncols=2, sharex=True, sharey=True, layout='constrained')
-img = axs[0].pcolormesh(freqs, amp2pow(amps), magZ)
+img = axs[0].pcolormesh(freqs/1e6, amp2pow(amps), magZ)
 fig.colorbar(img, ax=axs[0], orientation='horizontal').set_label('|S| / dB')
-img = axs[1].pcolormesh(freqs, amp2pow(amps), argZ)
+img = axs[1].pcolormesh(freqs/1e6, amp2pow(amps), argZ)
 fig.colorbar(img, ax=axs[1], orientation='horizontal').set_label('arg S / rad')
-axs[0].set_xlabel('f1 / Hz')
-axs[1].set_xlabel('f1 / Hz')
+axs[0].set_xlabel('f1 / MHz')
+axs[1].set_xlabel('f1 / MHz')
 axs[0].set_ylabel('output power at octave / dBm')
 secax = axs[1].secondary_yaxis('right', functions=(pow2amp, amp2pow))
 secax.set_ylabel('relative pulse amplitude', fontsize=8)

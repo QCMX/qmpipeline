@@ -14,7 +14,7 @@ import importlib
 import qm.qua as qua
 import qm.octave as octave
 
-import configuration as config
+import configuration_novna as config
 #import configuration_RF1 as config
 import qminit
 

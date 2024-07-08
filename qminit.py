@@ -12,7 +12,7 @@ but eg. external vs internal LO and which RF input port to use are only here.
 
 import os
 import qm.octave as octave
-from qm.QuantumMachinesManager import QuantumMachinesManager
+from qm import QuantumMachinesManager
 
 
 def connect(use_calibration=True):

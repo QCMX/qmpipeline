@@ -11,10 +11,11 @@ import importlib
 import numpy as np
 import matplotlib.pyplot as plt
 import qm.qua as qua
+import qm.octave as octave
 
 from helpers import data_path, mpl_pause, DurationEstimator, plt2dimg, plt2dimg_update
 
-import configuration as config
+import configuration_novna as config
 import qminit
 
 qmm = qminit.connect()
@@ -23,12 +24,12 @@ qmm = qminit.connect()
 
 from instruments.basel import BaselDACChannel
 
-gate = BaselDACChannel(7)
+gate = BaselDACChannel(6)
 
 assert gate.get_state(), "Basel channel not ON"
 print("CH", gate.channel, ":", gate.get_voltage(), "V")
 
-GATERAMP_STEP = 5e-6
+GATERAMP_STEP = 2e-6
 GATERAMP_STEPTIME = 0.02
 
 #%%
