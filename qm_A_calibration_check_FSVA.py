@@ -7,7 +7,7 @@ import qm.octave as octave
 
 from helpers import data_path
 
-import configuration as config
+import configuration_novna as config
 #import configuration_RF1 as config
 import qminit
 
@@ -29,7 +29,7 @@ fsva.visa_timeout = 1000
 filename = '{datetime}_fsva_octave_with_2x_VLF3000'
 fpath = data_path(filename)
 
-fLOs = np.array([2e9, 2.1e9, 2.2e9, 2.3e9, 2.4e9, 2.45e9, 2.5e9, 2.6e9, 2.7e9, 2.8e9, 2.9e9, 3.0e9, 3.01e9, 3.1e9, 3.2e9])
+fLOs = np.array([2e9, 2.1e9, 2.2e9, 2.3e9, 2.4e9, 2.45e9, 2.5e9, 2.6e9, 2.7e9, 2.8e9, 2.9e9, 3.0e9, 3.01e9, 3.1e9, 3.2e9, 3.4e9, 3.6e9, 3.8e9, 4.0e9])
 fIFs = np.array([-500, -400, -300, -200, -100, 0, 100, 200, 300, 400, 500]) * 1e6
 
 # FSVA meta
@@ -61,7 +61,7 @@ try:
         config.qmconfig['mixers']['octave_octave1_2'][0]['lo_frequency'] = fLO
         qm = qmm.open_qm(config.qmconfig)
         qminit.octave_setup_qubit(qm, config)
-    
+
         with qua.program() as mixer_cal_qubit:
             f = qua.declare(int)
             with qua.for_(*from_array(f, fIFs)):

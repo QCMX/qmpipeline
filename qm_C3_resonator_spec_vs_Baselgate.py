@@ -191,10 +191,10 @@ plt.plot(dat['Vgate'], np.angle(dat['dataS21'])[:,fidx])
 #%%
 
 #Shuttle
-Vtarget = 0
+Vtarget = -4.042
 
 step = 2e-6
-steptime = 0.02
+steptime = 0.01
 print("Ramp time:", np.abs(Vtarget - gate.get_voltage()) / step * steptime / 60, "min")
 gate.ramp_voltage(Vtarget, step, steptime)
 

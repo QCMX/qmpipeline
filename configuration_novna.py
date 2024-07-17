@@ -29,7 +29,8 @@ resonator_input_gain  = +15 # OPX IN, range -12 to +20dB
 qubit_output_gain     = 0 # Octave RF2, range -20 to +20dB
 
 # ADC offset in Volts
-adcoffset = np.array([0.0572889, 0.0706217])
+#adcoffset = np.array([0.0572889, 0.0706217])
+adcoffset = np.array([0.05715330732421875 , 0.07043738643798828])
 
 ## Frequencies
 resonatorLO = 5.01e9
@@ -38,8 +39,8 @@ resonatorIF = 0.20146e9 # 0.20577e9 # 0.2058e9
 # 20ns readout -> 200MHz IF
 # 50ns readout -> 100MHz IF
 
-qubitLO = 5.36114e9
-qubitIF = -150e6#-380e6
+qubitLO = 4.4e9# 5.36114e9
+qubitIF = -93e6#-380e6
 
 # For resonator width 450kHz width, ie. t=2us lifetime
 # choose at least 6us=3t, ie. 1500cycles
@@ -49,8 +50,8 @@ cooldown_clk = 6000 # 4ns cycles
 const_len = 20000
 const_amp = 0.1
 
-readout_len = 20000 # 52 # ns
-readout_amp = 0.01
+readout_len = 200000 # ns
+readout_amp = 0.0316
 
 short_readout_len = 20000 # ns
 short_readout_amp = 0.0316

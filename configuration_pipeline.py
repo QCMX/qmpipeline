@@ -35,15 +35,14 @@ adcoffset = np.array([0.057299890319824215 , 0.07062872677001952])
 
 ## Frequencies
 resonatorLO = 5.010e9
-resonatorIF = 0.202e9
+resonatorIF = 0.20146e9
 # 20ns readout -> 200MHz IF
 # 50ns readout -> 100MHz IF
 
 qubitLO = 3.5e9
-qubitIF = -150e6
+qubitIF = -93e6
 
-# For resonator width 450kHz width, ie. t=2us lifetime
-# choose at least 6us=3t, ie. 1500cycles
+# 4000 cycles = 16us
 cooldown_clk = 4000 # cycles
 
 ## Readout pulse parameters
@@ -312,7 +311,7 @@ qmconfig = {
             {
                 "intermediate_frequency": qubitIF,
                 "lo_frequency": qubitLO,
-                "correction": IQ_imbalance(-0.05,0.10),
+                "correction": (1, 0, 0, 1),
             },
         ],
     },

@@ -22,7 +22,7 @@ gate = BaselDACChannel(7) # 5 GHz
 assert gate.get_state(), "Basel channel not ON"
 print("CH", gate.channel, ":", gate.get_voltage(), "V")
 
-GATERAMP_STEP = 1e-6
+GATERAMP_STEP = 2e-6
 GATERAMP_STEPTIME = 0.02
 
 #%%
@@ -33,8 +33,9 @@ importlib.reload(qminit)
 # TODO make list programmatically and check against when choosing LO freq
 # Note: requires re-opening the QM afterwards; persistent independent of config
 mixercal = qmtools.QMMixerCalibration(qmm, config_pipeline, qubitLOs=[
-    2e9, 2.1e9, 2.2e9, 2.3e9, 2.4e9, 2.5e9, 2.6e9, 2.7e9, 2.8e9, 2.9e9,
-    3.0e9, 3.1e9, 3.2e9, 3.3e9, 3.4e9, 3.5e9, 3.6e9, 3.7e9])
+    2.0e9, 2.1e9, 2.2e9, 2.3e9, 2.4e9, 2.5e9, 2.6e9, 2.7e9, 2.8e9, 2.9e9,
+    3.0e9, 3.1e9, 3.2e9, 3.3e9, 3.4e9, 3.5e9, 3.6e9, 3.7e9, 3.8e9, 3.9e9,
+    4.0e9, 4.1e9])
 
 #%%
 importlib.reload(config_pipeline)
@@ -43,16 +44,14 @@ importlib.reload(qminit)
 filename = '{datetime}_qmpipeline_T1T2'
 fpath = data_path(filename, datesuffix='_qm')
 
-Vgate = np.linspace(-5.19, -5.22, 301)
-Vgate = np.linspace(-5.21, -5.23, 81)
-Vgate = np.linspace(-5.1, -5.4, 1201)
+Vgate = np.linspace(-3.95, -4.05, 201)
 #Vgate = np.array([-5.2806])
 Vstep = np.mean(np.abs(np.diff(Vgate)))
 print(f"Vgate measurement step: {Vstep*1e6:.1f}uV avg")
 Ngate = Vgate.size
 assert len(Vgate) == 1 or Vstep > 1.19e-6, "Vstep smaller than Basel resolution"
 
-fr_range = np.arange(204.5e6, 209.5e6, 0.02e6) # IF Hz
+fr_range = np.arange(200e6, 212e6, 0.05e6) # IF Hz
 fq_range = np.arange(-450e6, +450e6, 2e6)
 fq_amps = np.logspace(np.log10(0.00316), np.log10(0.056), 11)
 print(f"fq power range: {10*np.round(np.log10(fq_amps**2 * 10))[[0, -1]]} dBm")
@@ -64,7 +63,7 @@ try:
 except:
     pass
 
-setfactor = 15
+setfactor = 1
 print(f"Setting gate ({abs(gate.get_voltage()-Vgate[0])/GATERAMP_STEP/setfactor*GATERAMP_STEPTIME/60:.1f}min)")
 gate.ramp_voltage(Vgate[0], GATERAMP_STEP*setfactor, GATERAMP_STEPTIME)
 

@@ -62,9 +62,9 @@ qm = qmm.open_qm(config.qmconfig)
 qminit.octave_setup_resonator(qm, config)
 
 print("Running calibration on resonator channel...")
-qm.octave.calibrate_element('resonator', [
+print(qm.octave.calibrate_element('resonator', [
     (config.resonatorLO, config.resonatorIF)
-    ])
+    ]))
 
 # Need to reopen qm to apply calibration settings
 print("Playing constant pulse on resonator channel...")
@@ -98,6 +98,7 @@ qminit.octave_setup_qubit(qm, config)
 
 print("Running calibration on qubit channel...")
 cal = qm.octave.calibrate_element('qubit', [(config.qubitLO, config.qubitIF)])
+print(cal)
 
 # Need to reopen qm to apply calibration settings
 print("Playing constant pulse on qubit channel...")

@@ -97,7 +97,7 @@ class VgatePipeline:
         axs[0,0].set_ylabel("readout IF / MHz", fontsize=8)
         axs[0,npowers//2].set_title("Cavity, no drive", fontsize=8)
         # plot
-        for i, key in enumerate(keys):
+        for i, key in enumerate(keys[::-1]):
             qlo = self.get_shared_config_value(key, ['qubitLO'])
             qfs = self.get_shared_value(key, 'qubitIFs') + qlo
             p2s = self.get_shared_value(key, 'drive_power') # (Vgate, f2, P2)

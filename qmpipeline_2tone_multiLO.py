@@ -23,7 +23,7 @@ assert gate.get_state(), "Basel channel not ON"
 print("CH", gate.channel, ":", gate.get_voltage(), "V")
 
 GATERAMP_STEP = 2e-6
-GATERAMP_STEPTIME = 0.02
+GATERAMP_STEPTIME = 0.01
 
 #%% JPA pump
 
@@ -46,7 +46,7 @@ assert fluxbias.output() == 'on'
 
 #%%
 
-f2LOs = [2e9, 2.6e9, 3.2e9, 3.8e9, 4.4e9]
+f2LOs = [2e9, 2.4e9, 2.8e9, 3.2e9, 3.6e9, 4.0e9, 4.4e9]
 
 mixercal = qmtools.QMMixerCalibration(qmm, config_pipeline, qubitLOs=f2LOs)
 
@@ -56,8 +56,8 @@ importlib.reload(qminit)
 
 filename = '{datetime}_qmpipeline_2tone_LO'
 fpath = data_path(filename, datesuffix='_qm')
-Vgate = np.concatenate([np.linspace(-3.96, -3.99, 101)])
-#Vgate = np.array([-3.93, -4.08])
+Vgate = np.concatenate([np.linspace(-4.04, -3.96, 201)])
+# Vgate = np.array([-3.986])
 Vstep = np.mean(np.abs(np.diff(Vgate)))
 print(f"Vgate measurement step: {Vstep*1e6:.1f}uV avg")
 Ngate = Vgate.size
@@ -81,7 +81,7 @@ jpameta = {
     'output': jpapump.query_int(':output?') == 1
 }
 if not jpameta['output']:
-    print("Info: JPA off [press any key]")
+    print("Info: JPA off [press enter]")
     input()
 
 print(f"Setting gate ({abs(gate.get_voltage()-Vgate[0])/GATERAMP_STEP*GATERAMP_STEPTIME/60:.1f}min)")
@@ -100,12 +100,6 @@ pq.apply_offset_to(baseconfig)
 
 barefreq = 5.010e9 + 201.55e6#5.05578e9
 bareIF = barefreq - baseconfig['resonatorLO']
-# def fq_estimate(deltafr):
-#     """Convert resonance shift (Hz, compared to no qubit) to qubit frequency (Hz)"""
-#     return 0.93 * 0.270e9 * (deltafr/1e3)**(0.328)
-def fq_estimate(deltafr):
-    """Convert resonance shift (Hz, compared to no qubit) to qubit frequency (Hz)"""
-    return 3.31e9#0.270e9 * (deltafr/1e3)**(0.328)
 GATE_SETTLETIME = 5 # s
 
 # each name before colon indicates which program result is saved, i.e. the data format
@@ -200,13 +194,16 @@ try:
     
         for j, lo in enumerate(f2LOs):
             localconfig['qubitLO'] = lo
+            # Need to set same LO for all elements on same mixer, otherwise calibration might not work
             localconfig['qmconfig']['elements']['qubit']['mixInputs']['lo_frequency'] = lo
-            localconfig['qmconfig']['mixers']['octave_octave1_2'][0]['lo_frequency'] = lo
+            localconfig['qmconfig']['elements']['qubit2']['mixInputs']['lo_frequency'] = lo
+            # Note: Setting LO in qmconfig.mixers is without effect because that section
+            # is overwritten with data from the calibration database by the QM manager.
 
             fq_amps = np.logspace(np.log10(0.001), np.log10(0.316), 11)
             assert np.max(fq_amps) <= 0.3161 # max 0dBm
             prog = progs[3+j] = qmtools.QMQubitSpec_P2(
-                qmm, localconfig, Navg=400, qubitIFs=np.arange(-450e6, +450e6, 2e6),
+                qmm, localconfig, Navg=400, qubitIFs=np.arange(-300e6, +300e6, 2e6),
                 drive_amps=fq_amps)
             results[f'qubit_P2:LO{lo/1e9:.2f}GHz'][i] = prog.run(plot=axs[j%2,2+int(j/2)])
 
@@ -225,7 +222,8 @@ finally:
         measurement_duration=estimator.elapsed())
     print("Data saved.")
 
-    from vgatepipeline import VgatePipeline
-    pl = VgatePipeline(fpath+'.npz')
-    fig = pl.plot_Vgate_2tone_multi(figsize=(12, 8), npowers=5)
-    fig.savefig(fpath+'.png')
+    if Vgate.size >= 3:
+        from vgatepipeline import VgatePipeline
+        pl = VgatePipeline(fpath+'.npz')
+        fig = pl.plot_Vgate_2tone_multi(figsize=(12, 8), npowers=5)
+        fig.savefig(fpath+'.png')

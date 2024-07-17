@@ -177,7 +177,14 @@ class QMProgram (object):
         if not hasattr(self, 'qmprog'):
             self._make_program()
 
-        # TODO: reuse open quantum machine if config is the same?
+        # If LO is different for two elements on the same mixer, the wrong
+        # calibration is loaded.
+        assert (self.config['qmconfig']['elements']['qubit']['mixInputs']['lo_frequency']
+                == self.config['qmconfig']['elements']['qubit2']['mixInputs']['lo_frequency']), \
+            "Elements qubit and qubit2 do not have same LO freq"
+
+        # qmm.open_qm modifies the mixer section of the configuration dict,
+        # replacing it with values from the calibration db
         qm = self.qm = self.qmm.open_qm(self.config['qmconfig'])
         self._init_octave(qm)
         # TODO: precompile, but then needs to run on same qm
@@ -349,8 +356,10 @@ class QMMixerCalibration (QMProgram):
         print("Running calibration on resonator channel...")
         rcal = qm.octave.calibrate_element(
             'resonator', [(self.config['resonatorLO'], self.config['resonatorIF'])])
-        print(rcal)
         rcal = list(rcal.values())[0].__dict__
+        # delete to remove MonitorData object from qua
+        # Otherwise qua.octave is required to be installed to unpickle this
+        del rcal['temperature']
         if rcal['correction'] == [1, 0, 0, 1]:
             warnings.warn(f"Resonator calibration LO {self.config['resonatorLO']/1e9:f}GHz IF{self.config['resonatorIF']/1e6:f}MHz failed (result is identity matrix).")
 
@@ -363,8 +372,8 @@ class QMMixerCalibration (QMProgram):
             qm.octave.set_lo_frequency('qubit', lof)
             cal = qm.octave.calibrate_element(
                 'qubit', [(lof, self.config['qubitIF'])])
-            print(cal)
             cal = list(cal.values())[0].__dict__
+            del cal['temperature']
             if cal['correction'] == [1, 0, 0, 1]:
                 warnings.warn(f"Qubit calibration LO {lof/1e9:f}GHz IF{self.config['qubitIF']/1e6:f}MHz failed (result is identity matrix).")
             qcal.append(cal)
@@ -1147,7 +1156,10 @@ class QMQubitSpec_P2 (QMProgram):
 
 
 class QMReadoutSNR (QMProgram):
-    """Uses short readout pulse and saturation pulse."""
+    """Uses short readout pulse and saturation pulse.
+    
+    Need qubitIF to be tuned correctly to drive qubit into mixed state.
+    """
 
     def __init__(self, qmm, config, Navg, resonatorIFs, readout_amps, drive_len):
         pass

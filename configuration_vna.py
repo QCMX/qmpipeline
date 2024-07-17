@@ -28,7 +28,7 @@ VNA_PHASE_CORR = PHASE_CORR
 input_gain  = +15 # OPX IN, range -12 to +20dB
 
 ## Octave output parameters
-resonator_output_gain = -20 # Octave RF1, range -20 to +20dB
+resonator_output_gain = -10 # Octave RF1, range -20 to +20dB
 vna_output_gain = -10 # Octave RF1, range -20 to +20dB
 qubit_output_gain = -10 # Octave RF2, range -20 to +20dB
 
@@ -41,11 +41,11 @@ resonatorIF = 0.20146e9
 # 20ns readout -> 200MHz IF
 # 50ns readout -> 100MHz IF
 
-qubitLO = 2e9
+qubitLO = 5.3e9
 qubitIF = -150e6#-380e6
 
-vnaLO = 5.01e9
-vnaIF = 0.20e9
+vnaLO = 5.31e9
+vnaIF = -0.100e9
 
 # For resonator width 450kHz width, ie. t=2us lifetime
 # choose at least 6us=3t, ie. 1500cycles
@@ -53,10 +53,10 @@ cooldown_clk = 1000 # 4ns cycles
 
 ## Readout pulse parameters
 const_len = 10000
-const_amp = 0.01#316
+const_amp = 0.316
 
 readout_len = 100000 # ns
-readout_amp = 0.316#0.00316 # -40dB
+readout_amp = 0.01 # -30dB
 
 short_readout_len = 20000 # ns
 short_readout_amp = 0.0316

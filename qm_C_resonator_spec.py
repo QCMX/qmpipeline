@@ -34,8 +34,8 @@ except:
 
 Navg = 500
 
-f_min = 196e6 # 102e6
-f_max = 206e6 # 112e6
+f_min = 202e6 # 102e6
+f_max = 212e6 # 112e6
 df = 0.1e6
 freqs = np.arange(f_min, f_max + df/2, df)  # + df/2 to add f_max to freqs
 
