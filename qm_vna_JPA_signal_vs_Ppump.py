@@ -79,27 +79,30 @@ cal = qm.octave.calibrate_element('vna', [(config.vnaLO, config.vnaIF)])
 importlib.reload(config)
 importlib.reload(qminit)
 
-filename = '{datetime}_qm_JPA_signal'
+filename = '{datetime}_qm_JPA_signal_vs_Ppump'
 fpath = data_path(filename, datesuffix='_qm')
 
 ifs = np.arange(-402e6, 402e6, 1e6)
 Navg = 200
 
+Ppump = np.arange(-17, -9.1, 1)
+
 Iflux = fluxbias.current()
 pumpmeta = {
     'f': float(rfsource.query(':source:freq?')),
-    'power': float(rfsource.query(':source:power?')),
+    # 'power': float(rfsource.query(':source:power?')),
 }
 fs = config.vnaLO + ifs
 
 
 with qua.program() as vna:
-    n = qua.declare(int)  # variable for average loop
-    f = qua.declare(int)  # variable to sweep freqs
-    I = qua.declare(qua.fixed)  # demodulated and integrated signal
-    Q = qua.declare(qua.fixed)  # demodulated and integrated signal
-    I_st = qua.declare_stream()  # stream for I
-    Q_st = qua.declare_stream()  # stream for Q
+    nP = qua.declare(int)
+    n = qua.declare(int)
+    f = qua.declare(int)
+    I = qua.declare(qua.fixed)
+    Q = qua.declare(qua.fixed)
+    I_st = qua.declare_stream()
+    Q_st = qua.declare_stream()
     rand = qua.lib.Random()
 
     # Pump off
@@ -116,21 +119,26 @@ with qua.program() as vna:
             qua.save(Q, Q_st)
 
     # Pump on
-    qua.pause()
-    with qua.for_(n, 0, n < Navg, n + 1):
-        with qua.for_(*from_array(f, ifs)):  # Notice it's <= to include f_max (This is only for integers!)
-            qua.update_frequency('vna', f)  # update frequency of vna element
-            # qua.wait(config.cooldown_clk, 'vna')  # wait for resonator to decay
-            qua.wait(rand.rand_int(50)+4, 'vna')
-            qua.measure('readout', 'vna', None,
-                    qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
-                    qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
-            qua.save(I, I_st)
-            qua.save(Q, Q_st)
+    with qua.for_(nP, 0, nP < Ppump.size, nP + 1):
+        qua.pause()
+        with qua.for_(n, 0, n < Navg, n + 1):
+            with qua.for_(*from_array(f, ifs)):  # Notice it's <= to include f_max (This is only for integers!)
+                qua.update_frequency('vna', f)  # update frequency of vna element
+                # qua.wait(config.cooldown_clk, 'vna')  # wait for resonator to decay
+                qua.wait(rand.rand_int(50)+4, 'vna')
+                qua.measure('readout', 'vna', None,
+                        qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
+                        qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
+                qua.save(I, I_st)
+                qua.save(Q, Q_st)
 
     with qua.stream_processing():
-        I_st.buffer(Navg, len(ifs)).map(qua.FUNCTIONS.average(0)).save_all('I')
-        Q_st.buffer(Navg, len(ifs)).map(qua.FUNCTIONS.average(0)).save_all('Q')
+        Iavg = I_st.buffer(Navg, len(ifs)).map(qua.FUNCTIONS.average(0))
+        Qavg = Q_st.buffer(Navg, len(ifs)).map(qua.FUNCTIONS.average(0))
+        Iavg.save_all('I')
+        Qavg.save_all('Q')
+        ((I_st*I_st).buffer(Navg, len(ifs)).map(qua.FUNCTIONS.average(0)) - Iavg*Iavg).save_all("Ivar")
+        ((Q_st*Q_st).buffer(Navg, len(ifs)).map(qua.FUNCTIONS.average(0)) - Qavg*Qavg).save_all("Qvar")
 
 # Start program
 QMSLEEP = 0.05
@@ -147,10 +155,14 @@ while not job.is_paused():
     mpl_pause(QMSLEEP)
 
 print("Acquire signal, pump on")
+rfsource.write_str_with_opc(f':source:power {Ppump[0]:f}')
 rfsource.write_str_with_opc(":output on")
-job.resume()
-while job.status != 'completed':
-    mpl_pause(QMSLEEP)
+for i, P in enumerate(Ppump):
+    print(f"{i+1}/{len(Ppump)}: {P:+.1f}dBm")
+    rfsource.write_str_with_opc(f':source:power {Ppump[i]:f}')
+    job.resume()
+    while not job.is_paused() and job.status != 'completed':
+        mpl_pause(QMSLEEP)
 
 rfsource.write_str_with_opc(":output off")
 qm.octave.set_rf_output_mode('vna', octave.RFOutputMode.off)
@@ -158,31 +170,44 @@ qm.octave.set_rf_output_mode('vna', octave.RFOutputMode.off)
 job.result_handles.wait_for_all_values()
 I = job.result_handles.get('I').fetch_all()['value']
 Q = job.result_handles.get('Q').fetch_all()['value']
+Ivar = job.result_handles.get('Ivar').fetch_all()['value']
+Qvar = job.result_handles.get('Qvar').fetch_all()['value']
 Zraw = I + 1j*Q
 Z = Zraw * np.exp(1j * ifs[None,:] * config.VNA_PHASE_CORR) / config.readout_len * 2**12
-S = Z[1] / Z[0]
+Zvar = (Ivar + 1j*Qvar) / config.readout_len * 2**12
+
+S = Z[1:] / Z[0]
+snr = np.abs(Z) / np.sqrt(np.abs(Zvar.real + Zvar.imag))
 
 # Save
 np.savez_compressed(
-    fpath, Navg=Navg, ifs=ifs, fs=fs, Zraw=Zraw, Z=Z, S=S,
+    fpath, Navg=Navg, ifs=ifs, fs=fs, Zraw=Zraw, Z=Z, Zvar=Zvar,
+    S=S, snr=snr,
     pumpmeta=pumpmeta, Iflux=Iflux,
     config=config.meta)
 
 # Plot
-fig, axs = plt.subplots(nrows=3, sharex=True)
-axs[0].plot(fs/1e9, 20*np.log10(np.abs(S)))
+fig, axs = plt.subplots(nrows=4, sharex=True)
+axs[2].plot(fs/1e9, 20*np.log10(np.abs(Z[0])), color=plt.cm.rainbow(0), label="Pump off")
+for i, P in enumerate(Ppump):
+    c = plt.cm.rainbow((i+1)/len(Ppump))
+    axs[0].plot(fs/1e9, 20*np.log10(np.abs(S[i])), color=c)
+    axs[1].plot(fs/1e9, np.unwrap(np.angle(S[i])), color=c, label=f"P={P:+.1f}dBm")
+    axs[2].plot(fs/1e9, 20*np.log10(np.abs(Z[i+1])), color=c)
+    axs[3].plot(fs/1e9, 20*np.log10(snr[i+1]/snr[0]), color=c)
 axs[0].set_ylabel("|S/Sref| / dB")
-axs[1].plot(fs/1e9, np.unwrap(np.angle(S)))
 axs[1].set_ylabel("arg S/Sref")
-axs[2].plot(fs/1e9, 20*np.log10(np.abs(Z[0])))
 axs[2].set_ylabel("|Soff| / dB")
+axs[3].set_ylabel("SNR(on/off) / dB")
 axs[-1].set_xlabel('f / GHz')
+axs[1].legend(fontsize=6)
+# axs[2].legend(fontsize=8)
 readoutpower = 10*np.log10(config.readout_amp**2 * 10) # V to dBm
 title = (
-    f"LO={config.vnaLO/1e9:.5f}GHz   Navg {Navg}"
+    f"signal LO={config.vnaLO/1e9:.5f}GHz   Navg {Navg}"
     f"   electric delay {config.VNA_PHASE_CORR:.3e}rad/Hz"
     f"\n{config.readout_len}ns readout at {readoutpower:.1f}dBm{config.vna_output_gain:+.1f}dB"
     f",   {config.input_gain:+.1f}dB input gain"
-    f"\nIflux {Iflux*1e3:.5}mA  Pump {pumpmeta['f']/1e9:.5f}GHz {pumpmeta['power']:+.1}dBm")
+    f"\nIflux {Iflux*1e3:.5}mA  Pump {pumpmeta['f']/1e9:.5f}GHz")
 fig.suptitle(title, fontsize=10)
 fig.savefig(fpath+'.png')

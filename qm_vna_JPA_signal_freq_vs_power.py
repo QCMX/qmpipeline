@@ -73,11 +73,11 @@ importlib.reload(qminit)
 filename = '{datetime}_qm_JPA_signal_power_vs_freq'
 fpath = data_path(filename, datesuffix='_qm')
 
-Iflux = -0.025e-3 # A
+Iflux = 0.025e-3 # A
 fpump = 10.481e9
 Ppump = -12.7
 
-ifsignal = np.arange(100e6, 300e6, 5e6)
+ifsignal = np.arange(100e6, 300e6, 1e6)
 Psignal = np.arange(-60, 0.1, 5)
 
 Navg = 100
@@ -127,7 +127,7 @@ with qua.program() as vna:
         Iavg.save_all('I')
         Qavg.save_all('Q')
         ((I_st*I_st).buffer(Navg, ifsignal.size).map(qua.FUNCTIONS.average(0)) - Iavg*Iavg).save_all('Ivar')
-        ((I_st*I_st).buffer(Navg, ifsignal.size).map(qua.FUNCTIONS.average(0)) - Qavg*Qavg).save_all('Qvar')
+        ((Q_st*Q_st).buffer(Navg, ifsignal.size).map(qua.FUNCTIONS.average(0)) - Qavg*Qavg).save_all('Qvar')
 
 
 def acquire():
@@ -153,7 +153,7 @@ def acquire():
 print("Acquiring ref...")
 rfsource.write_str_with_opc(":output off")
 
-Zofee, Zofeevar = acquire()
+Zoff, Zoffvar = acquire()
 
 print("Acquiring signal...")
 rfsource.write_str_with_opc(f':source:power {Ppump:f}')
@@ -177,15 +177,15 @@ qm.octave.set_rf_output_mode('vna', octave.RFOutputMode.off)
 # Plot
 from matplotlib.colors import CenteredNorm
 fig, axs = plt.subplots(nrows=2, ncols=2, sharex=True, sharey=True, layout='constrained')
-im = plt2dimg(axs[0,0], (ifsignal+config.vnaLO)/1e9, Psignal, 20*np.log10(Zon))
+im = plt2dimg(axs[0,0], (ifsignal+config.vnaLO)/1e9, Psignal, 20*np.log10(np.abs(Zon)/amps[:,None]).T)
 fig.colorbar(im, ax=axs[0,0], orientation='horizontal', shrink=0.8, label='|S| / dB')
-im = plt2dimg(axs[0,1], (ifsignal+config.vnaLO)/1e9, Psignal, 20*np.log10(Zon/Zoff), norm=CenteredNorm(), cmap='coolwarm')
+im = plt2dimg(axs[0,1], (ifsignal+config.vnaLO)/1e9, Psignal, 20*np.log10(np.abs(Zon/Zoff)).T, norm=CenteredNorm(), cmap='coolwarm')
 fig.colorbar(im, ax=axs[0,1], orientation='horizontal', shrink=0.8, label='Gain  |Son/Soff| / dB')
 snron = np.abs(Zon) / np.sqrt(Zonvar.real + Zonvar.imag)
-snroff = np.abs(Zon) / np.sqrt(Zonvar.real + Zonvar.imag)
-im = plt2dimg(axs[1,0], (ifsignal+config.vnaLO)/1e9, Psignal, snron)
-fig.colorbar(im, ax=axs[1,0], orientation='horizontal', shrink=0.8, label='|S| / dB')
-im = plt2dimg(axs[1,1], (ifsignal+config.vnaLO)/1e9, Psignal, 10*np.log10(snron/snroff), norm=CenteredNorm(), cmap='coolwarm')
+snroff = np.abs(Zoff) / np.sqrt(Zoffvar.real + Zoffvar.imag)
+im = plt2dimg(axs[1,0], (ifsignal+config.vnaLO)/1e9, Psignal, snron.T)
+fig.colorbar(im, ax=axs[1,0], orientation='horizontal', shrink=0.8, label='|SNRon| / dB')
+im = plt2dimg(axs[1,1], (ifsignal+config.vnaLO)/1e9, Psignal, 10*np.log10(snron/snroff).T, norm=CenteredNorm(), cmap='coolwarm')
 fig.colorbar(im, ax=axs[1,1], orientation='horizontal', shrink=0.8, label='SNR gain: 10*np.log10(SNRon / SNR off|)')
 axs[0,0].set_ylabel(f"Signal power / dBm  {config.vna_output_gain:+.1f}dB")
 axs[-1,0].set_xlabel("Signal freq / GHz")

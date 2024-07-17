@@ -12,12 +12,14 @@ The pump frequency and power are the most sensitive parameters, then the flux
 bias current. For this reason this script scans pump parameters finely and
 repeats measurement at multiple but not as many flux bias points.
 
-Live plot shows amplifier gain.
-Second plot after measurement shows SNR.
+Live plot shows amplifier power gain.
+Second plot after measurement shows power SNR = (amplitude SNR)^2.
 
 SNR is avg(|signal|) / std(|signal|). Note that this is roughly the inverse
 of std(arg(signal)), since std(arg(signal)) = tan(noise / signal) for small
 noise compared to signal.
+
+For a complex signal, we have (std Z)^2 = var(Z) =var(I)+var(Q)
 
 The SNR is for a single readout measurement, since we take the variance between
 demodulation results. The signal values are the averaged ones. So the SNR
@@ -52,7 +54,7 @@ fluxbias = GS200("source", 'TCPIP0::169.254.0.2::inst0::INSTR', terminator="\n")
 assert fluxbias.source_mode() == 'CURR'
 assert fluxbias.output() == 'on'
 
-FLUXRAMP_STEP = 5e-8 # A
+FLUXRAMP_STEP = 1e-7 # A
 FLUXRAMP_STEPTIME = 0.05 # s
 SETTLING_TIME = 0.1 # s
 FLUX_MAXJUMP = 2e-4 # A
@@ -105,23 +107,25 @@ cal = qm.octave.calibrate_element('resonator', [(config.resonatorLO, config.reso
 importlib.reload(config)
 importlib.reload(qminit)
 
-element = 'resonator'
+element = 'vna'
 filename = '{datetime}_qm_JPA_pump_power_vs_pump_freq_vs_Iflux'
 fpath = data_path(filename, datesuffix='_qm')
 
 #Iflux = np.array([0e-3, 0.01e-3, 0.02e-3, 0.025e-3, 0.027e-3, 0.03e-3, 0.032e-3]) # A
 #Iflux = np.array([0.023e-3, 0.024e-3, 0.025e-3, 0.026e-3, 0.027e-3, 0.028e-3, 0.029e-3, 0.03e-3]) # A
-Iflux = np.array([0.025e-3, 0.026e-3]) # A
+#Iflux = np.array([0.023e-3, 0.026e-3, 0.029e-3, 0.032e-3]) # A
+Iflux = np.array([0.026e-3]) # A
 if element == 'vna':
     fsignal = config.vnaLO + config.vnaIF
 else:
     fsignal = config.resonatorLO + config.resonatorIF
 
 Navg = 100
-fpump = np.arange(9.5e9, 11.5e9, 5e6)
-fpump = np.arange(10.3e9, 10.7e9, 1e6)
-fpump = np.arange(10.44e9, 10.54e9, 0.4e6)
-Ppump = np.arange(-17, -10, 0.2)
+
+fpump = np.arange(10.49e9, 10.54e9, 0.5e6)
+Ppump = np.arange(-14, -11, 0.2)
+
+Soff_avg_factor = 40
 
 # Ramp to flux
 assert np.all(np.abs(Iflux[0]) < 1e-3) # Limit 1mA thermocoax
@@ -145,7 +149,7 @@ with qua.program() as vnaprog:
 
     qua.pause()
     # First run for reference line
-    with qua.for_(n, 0, n < Navg, n + 1):
+    with qua.for_(n, 0, n < Navg*Soff_avg_factor, n + 1):
         # qua.wait(config.cooldown_clk, 'vna') # not really necessary, VNA is CW measurement
         qua.wait(rand.rand_int(50)+4, element)
         qua.measure('readout', element, None,
@@ -269,15 +273,16 @@ try:
                     estimator.step((k*Ppump.size + i)*fpump.size + j)
 
             # Retrieve data and plot
-            while (Ihandle.count_so_far() < (i+1)*fpump.size+1
-                   or Qhandle.count_so_far() < (i+1)*fpump.size+1
-                   or Ivarhandle.count_so_far() < (i+1)*fpump.size+1
-                   or Qvarhandle.count_so_far() < (i+1)*fpump.size+1):
+            requiredsamples = (i+1)*fpump.size + Soff_avg_factor
+            while (Ihandle.count_so_far() < requiredsamples
+                   or Qhandle.count_so_far() < requiredsamples
+                   or Ivarhandle.count_so_far() < requiredsamples
+                   or Qvarhandle.count_so_far() < requiredsamples):
                 mpl_pause(QMSLEEP)
             # signal
             I, Q = Ihandle.fetch_all()['value'], Qhandle.fetch_all()['value']
-            refsignal[k] = I[0] + 1j * Q[0]
-            S21[k,:i+1] = (I[1:] + 1j * Q[1:]).reshape(i+1, fpump.size)
+            refsignal[k] = np.mean(I[:Soff_avg_factor] + 1j * Q[:Soff_avg_factor])
+            S21[k,:i+1] = (I[Soff_avg_factor:] + 1j * Q[Soff_avg_factor:]).reshape(i+1, fpump.size)
             plt2dimg_update(imgs[k], 20*np.log10(np.abs(S21[k]/refsignal[k])).T)
             # variance: not plotted live, no need to retrieve here
 
@@ -287,13 +292,13 @@ try:
         Qvarhandle.wait_for_all_values()
         # signal
         I, Q = Ihandle.fetch_all()['value'], Qhandle.fetch_all()['value']
-        refsignal[k] = I[0] + 1j * Q[0]
-        S21[k,:i+1] = (I[1:] + 1j * Q[1:]).reshape(i+1, fpump.size)
+        refsignal[k] = np.mean(I[:Soff_avg_factor] + 1j * Q[:Soff_avg_factor])
+        S21[k,:i+1] = (I[Soff_avg_factor:] + 1j * Q[Soff_avg_factor:]).reshape(i+1, fpump.size)
         plt2dimg_update(imgs[k], 20*np.log10(np.abs(S21[k]/refsignal[k])).T)
         # variance
         Ivar, Qvar = Ivarhandle.fetch_all()['value'], Qvarhandle.fetch_all()['value']
-        refsignalvar[k] = Ivar[0] + 1j*Qvar[0]
-        S21var[k,:i+1] = (Ivar[1:] + 1j*Qvar[1:]).reshape(i+1, fpump.size)
+        refsignalvar[k] = np.mean(Ivar[:Soff_avg_factor] + 1j*Qvar[:Soff_avg_factor])
+        S21var[k,:i+1] = (Ivar[Soff_avg_factor:] + 1j*Qvar[Soff_avg_factor:]).reshape(i+1, fpump.size)
 finally:
     job.halt()
     estimator.end()
@@ -304,13 +309,13 @@ finally:
         Qvarhandle.wait_for_all_values()
         # signal
         I, Q = Ihandle.fetch_all()['value'], Qhandle.fetch_all()['value']
-        refsignal[k] = I[0] + 1j * Q[0]
-        S21[k] = np.pad(I[1:]+1j*Q[1:], pad_width=(0,Ppump.size*fpump.size-I.size+1), constant_values=np.nan+0j).reshape(Ppump.size, fpump.size)
+        refsignal[k] = np.mean(I[:Soff_avg_factor] + 1j * Q[:Soff_avg_factor])
+        S21[k] = np.pad(I[Soff_avg_factor:]+1j*Q[Soff_avg_factor:], pad_width=(0,Ppump.size*fpump.size-I.size+Soff_avg_factor), constant_values=np.nan+0j).reshape(Ppump.size, fpump.size)
         plt2dimg_update(imgs[k], 20*np.log10(np.abs(S21[k]/refsignal[k])).T)
         # variance
         Ivar, Qvar = Ivarhandle.fetch_all()['value'], Qvarhandle.fetch_all()['value']
-        refsignalvar[k] = Ivar[0] + 1j*Qvar[0]
-        S21var[k] = np.pad(Ivar[1:]+1j*Qvar[1:], pad_width=(0,Ppump.size*fpump.size-Ivar.size+1), constant_values=np.nan+0j).reshape(Ppump.size, fpump.size)
+        refsignalvar[k] = np.mean(Ivar[:Soff_avg_factor] + 1j*Qvar[:Soff_avg_factor])
+        S21var[k] = np.pad(Ivar[Soff_avg_factor:]+1j*Qvar[Soff_avg_factor:], pad_width=(0,Ppump.size*fpump.size-Ivar.size+Soff_avg_factor), constant_values=np.nan+0j).reshape(Ppump.size, fpump.size)
     except Exception as e:
         print(repr(e))
     np.savez_compressed(
@@ -326,19 +331,19 @@ finally:
     qm.octave.set_rf_output_mode(element, octave.RFOutputMode.off)
 
     # Plot SNR
-    refsnr = np.nanmean(np.abs(refsignal)) / np.sqrt(np.nanmean(refsignalvar.real + refsignalvar.imag))
+    refsnr = np.abs(refsignal) / np.sqrt(refsignalvar.real + refsignalvar.imag)
     nrows = int(np.sqrt(Iflux.size))
     ncols = int(np.ceil(Iflux.size/nrows))
     fig, axs = plt.subplots(nrows=nrows, ncols=ncols, sharex=True, sharey=True, layout='constrained', squeeze=False, figsize=(12,8))
     imgs = [None] * Iflux.size
     axs[0,0].set_ylabel('Pump power / dBm')
     axs[-1,0].set_xlabel('Pump freq / GHz')
-    for k, I in enumerate(Iflux):
-        axs[k//ncols,k%ncols].set_title(f"Iflux {I*1e3:.5f} mA", fontsize=10)
+    for k, Ifl in enumerate(Iflux):
+        axs[k//ncols,k%ncols].set_title(f"Iflux {Ifl*1e3:.5f} mA", fontsize=10)
         snr = np.abs(S21[k]) / np.sqrt(S21var[k].real + S21var[k].imag)
         imgs[k] = plt2dimg(
-            axs[k//ncols,k%ncols], fpump/1e9, Ppump, snr.T,
-            norm=CenteredNorm(vcenter=refsnr), cmap='coolwarm')
+            axs[k//ncols,k%ncols], fpump/1e9, Ppump, 20*np.log10(snr.T/refsnr[k]),
+            norm=CenteredNorm(vcenter=0), cmap='coolwarm')
         fig.colorbar(imgs[k], ax=axs[k//ncols,k%ncols], orientation='horizontal', shrink=0.8)
     readoutpower = 10*np.log10(config.readout_amp**2 * 10) # V to dBm
     if element == 'vna':
@@ -346,13 +351,13 @@ finally:
             f"signal {config.vnaLO/1e9:.5f}GHz+{config.vnaIF/1e6:.3f}MHz   Navg {Navg}"
             f"\n{config.readout_len/1e3}us readout at {readoutpower:.1f}dBm{config.vna_output_gain:+.1f}dB"
             f",   {config.input_gain:+.1f}dB input gain"
-            f"\nColorbar:  amplitude SNR; Pump off SNR {refsnr:.1e}")
+            f"\nColorbar:  power SNR gain / dB; Pump off SNR {np.nanmean(refsnr):.1e}")
     else:
         title = (
             f"signal {config.resonatorLO/1e9:.5f}GHz+{config.resonatorIF/1e6:.3f}MHz   Navg {Navg}"
             f"\n{config.readout_len/1e3}us readout at {readoutpower:.1f}dBm{config.resonator_output_gain:+.1f}dB"
             f",   {config.input_gain:+.1f}dB input gain"
-            f"\nColorbar:  amplitude SNR; Pump off SNR {refsnr:.1e}")
+            f"\nColorbar:  power SNR gain / dB;  Pump off amplitude SNR {np.nanmean(refsnr):.1e}")
     fig.suptitle(title, fontsize=10)
     fig.savefig(fpath+'_snr.png', dpi=300)
 

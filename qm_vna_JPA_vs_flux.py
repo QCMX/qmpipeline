@@ -70,7 +70,7 @@ importlib.reload(qminit)
 filename = '{datetime}_qm_vna_vs_flux_test'
 fpath = data_path(filename, datesuffix='_qm')
 
-Iflux = np.concatenate([np.linspace(-0.5e-3, 0.1e-3, 601)])
+Iflux = np.concatenate([np.linspace(-0.5e-3, 0.1e-3, 301)])
 I_step = np.mean(np.abs(np.diff(Iflux)))
 print(f"Iflux measurement step: {I_step*1e3:.5f}mA avg")
 Nflux = Iflux.size
@@ -78,7 +78,7 @@ Nflux = Iflux.size
 assert np.all(np.abs(Iflux) < 1e-3) # Limit 1mA thermocoax
 assert np.all(np.abs(Iflux) < 0.51e-3) # Limit to JPA flux period * 0.6
 
-Navg = 300
+Navg = 200
 
 freqs = np.arange(-402e6, 402e6, 4e6)
 Nf = len(freqs)
