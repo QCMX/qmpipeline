@@ -1159,13 +1159,19 @@ class QMReadoutSNR (QMProgram):
     """Uses short readout pulse and saturation pulse.
     
     Need qubitIF to be tuned correctly to drive qubit into mixed state.
+
+    Note: 4.28 fixed point numbers have a range of [-8 to 8) with a precision of 2^-28 = 3.7e-9.
+    This means the typical demod result squared, 1e-5**2=1e-10 is smaller than the precision!
+    Thus we cannot calculate the variance with a naive algorithm on the QM.
+
+    For this reason the variance is computed from single shot results afterwards.
     """
 
-    def __init__(self, qmm, config, Navg, resonatorIFs, readout_amps, drive_len):
-        pass
+    def __init__(self, qmm, config, Navg, resonatorIFs, readout_amps, drive_len, Nvar=1000):
         super().__init__(qmm, config)
+        assert Nvar <= Navg, "Number of shots for variance needs to be equal or smaller than total samples used for average."
         self.params = {
-            'Navg': Navg,
+            'Navg': Navg, 'Nvar': Nvar,
             'resonatorIFs': resonatorIFs,
             'readout_amps': readout_amps,
             'drive_len': drive_len}
@@ -1191,10 +1197,8 @@ class QMReadoutSNR (QMProgram):
             n = qua.declare(int)
             f = qua.declare(int)
             a = qua.declare(qua.fixed)
-            I = qua.declare(qua.fixed)
-            Q = qua.declare(qua.fixed)
-            I_st = qua.declare_stream()
-            Q_st = qua.declare_stream()
+            I, Q = qua.declare(qua.fixed), qua.declare(qua.fixed)
+            I_st, Q_st = qua.declare_stream(), qua.declare_stream()
             n_st = qua.declare_stream()
             rand = qua.lib.Random()
 
@@ -1232,8 +1236,8 @@ class QMReadoutSNR (QMProgram):
                 n_st.save('iteration')
                 I_st.buffer(len(freqs), len(amps), 2).average().save('I')
                 Q_st.buffer(len(freqs), len(amps), 2).average().save('Q')
-                I_st.buffer(min(self.params['Navg'], 1000), len(freqs), len(amps), 2).save('I_single_shot')
-                Q_st.buffer(min(self.params['Navg'], 1000), len(freqs), len(amps), 2).save('Q_single_shot')
+                I_st.buffer(self.params['Nvar'], len(freqs), len(amps), 2).save('I_single_shot')
+                Q_st.buffer(self.params['Nvar'], len(freqs), len(amps), 2).save('Q_single_shot')
 
         self.qmprog = prog
         return prog
@@ -1248,6 +1252,47 @@ class QMReadoutSNR (QMProgram):
             f"{self.params['drive_len']:.0f}ns drive,  {drivepower:.1f}dBm{self.config['qubit_output_gain']:+.1f}dB"
         )
 
+    def _retrieve_results(self, resulthandles=None):
+        """Calculates signal variance and amplitude SNR.
+
+        Returns dict with keys
+
+        Z : complex array of shape (len(freqs), len(amps), 2)
+            Signal mean, last axis is [drive OFF, drive ON].
+        Zvar : complex array of shape (len(freqs), len(amps), 2)
+            Signal variance.
+            Only present if program ran long enough.
+        SNR : real and positive array of shape (len(freqs), len(amps))
+            Amplitude SNR where signal given by difference between ON/OFF
+            measurement.
+            Only present if program ran long enough.
+
+        readout_power : array of shape (len(amps),)
+            Readout amplitude converted to output power,
+            including octave output gain.
+        """
+        res = super()._retrieve_results(resulthandles)
+        if 'Z' in res:
+            if 'I' in res: del res['I']
+            if 'Q' in res: del res['Q']
+        # Take variance of single shots and delete single shot data
+        if res['I_single_shot'] is not None:
+            res['Ivar'] = np.var(res['I_single_shot'], axis=0)
+            del res['I_single_shot']
+        if res['Q_single_shot'] is not None:
+            res['Qvar'] = np.var(res['Q_single_shot'], axis=0)
+            del res['Q_single_shot']
+        # Calculate Zvar and SNR
+        if 'Ivar' in res and 'Qvar' in res:
+            res['Zvar'] = res['Ivar'] + 1j*res['Qvar']
+            signal = np.abs(res['Z'][...,1] - res['Z'][...,0])
+            noise = np.sqrt(np.mean(res['Ivar'], axis=-1) + np.mean(res['Qvar'], axis=-1))
+            res['SNR'] = signal / noise
+            del res['Ivar']
+            del res['Qvar']
+        res['readout_power'] = opx_amp2pow(self.params['readout_amps'], self.config['resonator_output_gain'])
+        return res
+
     def _initialize_liveplot(self, ax):
         freqs = self.params['resonatorIFs']  # Hz
         amps = self.params['readout_amps']  # V
@@ -1257,7 +1302,7 @@ class QMReadoutSNR (QMProgram):
         self.img = ax.pcolormesh(xx, yy, np.full(
             (len(freqs), len(amps)), np.nan), shading='nearest')
         self.colorbar = ax.get_figure().colorbar(self.img, ax=ax, orientation='horizontal', shrink=0.9)
-        self.colorbar.set_label("| S_ON - S_OFF |")
+        self.colorbar.set_label("|SON - SOFF|")
         ax.set_xlabel("resonator IF / MHz")
         ax.set_ylabel("readout power / dBm")
         axright = ax.secondary_yaxis(
@@ -1271,15 +1316,11 @@ class QMReadoutSNR (QMProgram):
 
     def _update_liveplot(self, ax, resulthandles):
         res = self._retrieve_results(resulthandles)
-        if res['Z'] is None:
-            return
-        dist = np.abs(res['Z'][...,1] - res['Z'][...,0])# / self.params['readout_amps'][None,:]
-        if not (res['I_single_shot'] is None or res['Q_single_shot'] is None):
-            Zsingle = (res['I_single_shot'] + 1j * res['Q_single_shot'])
-            snr = dist / np.std(Zsingle, axis=0)[:,:,0]
-            self.img.set_array(snr)
+        if 'SNR' in res:
+            self.img.set_array(res['SNR'])
             self.colorbar.set_label('SNR')
-        else:
+        elif res['Z'] is not None:
+            dist = np.abs(res['Z'][...,1] - res['Z'][...,0])
             self.img.set_array(dist)
         self.img.autoscale()
         ax.set_title(self._figtitle((res['iteration'] or 0)+1), fontsize=8)
