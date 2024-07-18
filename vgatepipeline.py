@@ -4,9 +4,15 @@ import numpy as np
 import matplotlib.pyplot as plt
 from functools import reduce
 
-from helpers import plt2dimg
+from .helpers import plt2dimg
 
 class VgatePipeline:
+    """
+    Represents data from running the QM pipeline vs gate voltage.
+
+    Provides utility functions to gather program outputs into arrays.
+    """
+
     def __init__(self, fpath):
         self.data = np.load(fpath, allow_pickle=True)
         self.results = self.data['results'][()]
@@ -75,6 +81,57 @@ class VgatePipeline:
             raise Exception(f"data in variable {variablekey} in result {resultkey} does not have the same shape for all gate points")
         values = [np.broadcast_to(v, shapes[0]) for v in values]
         return np.stack(values)
+
+
+    def merge_qubit_P2(self, resultkey='qubit_P2', powerdecimals=2):
+        """
+        Merge two-tone measurements of type `qubit_P2` with different
+        LO/IF frequencies per gate point into one array with absolute frequency.
+
+        Parameters
+        ----------
+        resultkey : str
+            Key in results. Has to be a `qubit_P2` measurement.
+        powerdecimals : int
+            Rounds power to this number of decimals before use and comparing.
+            Since the power (in dB) is converted from a float log scale with boundaries
+            set by hand, they often don't exactly align in all digits.
+            It is required that after rounding no power values coincide.
+            Default is 2.
+
+        Returns
+        -------
+        f2 : numpy.ndarray
+            Drive frequency axis
+        power : numpy.ndarray
+            Power values in dBm, output at octave
+        Zmerged : numpy.ndarray
+            Complex valued scattering parameter with dimensions (Vgate, f2, power)
+        """
+        assert resultkey == 'qubit_P2' or resultkey.startswith('qubit_P2:')
+        fqs = np.sort(np.unique([res['qubitIFs']+res['config']['qubitLO'] for res in self.results[resultkey] if res is not None]))
+        powers = np.sort(np.unique([np.round(res['drive_power'], powerdecimals) for res in self.results[resultkey] if res is not None]))
+        Zmerged = np.full((self.Vgate.size, fqs.size, powers.size), np.nan+0j)
+        for i, res in enumerate(self.results[resultkey]):
+            if res is None: continue
+            fq = res['qubitIFs'] + res['config']['qubitLO']
+            assert np.all(np.sort(fq) == fq)
+            fmask = np.any(np.isclose(fqs[:,None], fq[None,:]), axis=1)
+
+            ps = np.round(res['drive_power'], powerdecimals)
+            assert np.all(np.sort(ps) == ps)
+            assert np.all(np.unique(ps) == ps), "Power in dB closer than given rounding"
+            pmask = np.any(np.isclose(powers[:,None], ps[None,:]), axis=1)
+            #print(Zmerged.shape, fmask.shape, pmask.shape)
+            #print(Zmerged[i][fmask,:][:,pmask].shape, res['Z'].shape)
+            # Zmerged[i][fmask,:][:,pmask] = res['Z'] # doesn't work, not modifying Zmerged
+            pexpand = np.full((fq.size, powers.size), np.nan+0j)
+            pexpand[:,pmask] = res['Z']
+            fexpand = np.full((fqs.size, powers.size), np.nan+0j)
+            fexpand[fmask,:] = pexpand
+            Zmerged[i] = fexpand
+        return fqs, powers, Zmerged
+
 
     def plot_Vgate_2tone_multi(self, keys=None, npowers=3, **figkwargs):
         """Make overview figure with data from multiple 2tone results.
