@@ -1326,6 +1326,164 @@ class QMReadoutSNR (QMProgram):
         ax.set_title(self._figtitle((res['iteration'] or 0)+1), fontsize=8)
 
 
+class QMReadoutSNR_P1 (QMProgram):
+    """Uses short readout pulse and saturation pulse.
+
+    Need qubitIF to be tuned correctly to drive qubit into mixed state.
+    """
+
+    def __init__(self, qmm, config, Navg, readout_amps, drive_len, Nvar=1000):
+        super().__init__(qmm, config)
+        assert Nvar <= Navg
+        self.params = {
+            'Navg': Navg, 'Nvar': Nvar,
+            'readout_amps': readout_amps,
+            'drive_len': drive_len}
+
+    def _make_program(self):
+        drive_amp_scale = self.config['saturation_amp'] / \
+            self.config['qmconfig']['waveforms']['saturation_wf']['sample']
+
+        assert np.all(np.abs(self.params['readout_amps']) <= 0.5), "Output amplitudes need to be in range -0.5 to 0.5V."
+        amps = self.params['readout_amps'] / \
+            self.config['qmconfig']['waveforms']['short_readout_wf']['sample']
+        if np.any(amps < -2) or np.any(amps >= 2):
+            raise ValueError(
+                "Readout amplitudes cannot be scaled to target voltage because ratio is out of scaling range [-2 to 2].")
+
+        assert self.params['drive_len'] % 4 == 0
+        #drive_len_cycles = self.params['drive_len'] // 4
+        #readoutwait_cycles = drive_len_cycles - self.config['short_readout_len']//4
+        #assert readoutwait_cycles >= 4
+
+        with qua.program() as prog:
+            n = qua.declare(int)
+            a = qua.declare(qua.fixed)
+            I = qua.declare(qua.fixed)
+            Q = qua.declare(qua.fixed)
+            I_st = qua.declare_stream()
+            Q_st = qua.declare_stream()
+            n_st = qua.declare_stream()
+            rand = qua.lib.Random()
+
+            qua.update_frequency('qubit', self.config['qubitIF'])
+            with qua.for_(n, 0, n < self.params['Navg'], n + 1):
+                with qua.for_(*from_array(a, amps)):
+                    # drive OFF
+                    qua.measure(
+                        'short_readout'*qua.amp(a), 'resonator', None,
+                        qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
+                        qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
+                    qua.save(I, I_st)
+                    qua.save(Q, Q_st)
+                    qua.wait(self.config['cooldown_clk'], 'resonator')
+                    qua.wait(rand.rand_int(50)+4, 'resonator') # randomize demod error
+
+                    # drive ON
+                    qua.align()
+                    qua.play('saturation'*qua.amp(drive_amp_scale), 'qubit')
+                    # qua.wait(readoutwait_cycles, 'resonator')
+                    qua.align()
+                    qua.measure(
+                        'short_readout'*qua.amp(a), 'resonator', None,
+                        qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
+                        qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
+                    qua.save(I, I_st)
+                    qua.save(Q, Q_st)
+                    qua.wait(self.config['cooldown_clk'], 'resonator')
+                    qua.wait(rand.rand_int(50)+4, 'resonator') # randomize demod error
+                qua.save(n, n_st)
+
+            with qua.stream_processing():
+                n_st.save('iteration')
+                I_st.buffer(len(amps), 2).average().save('I')
+                Q_st.buffer(len(amps), 2).average().save('Q')
+                I_st.buffer(self.params['Nvar'], len(amps), 2).save('I_single_shot')
+                Q_st.buffer(self.params['Nvar'], len(amps), 2).save('Q_single_shot')
+
+        self.qmprog = prog
+        return prog
+
+    def _retrieve_results(self, resulthandles=None):
+        """Calculates variance and SNR"""
+        res = super()._retrieve_results(resulthandles)
+        if 'Z' in res:
+            if 'I' in res: del res['I']
+            if 'Q' in res: del res['Q']
+        # Take variance of single shots and delete single shot data
+        if res['I_single_shot'] is not None:
+            res['Ivar'] = np.var(res['I_single_shot'], axis=0)
+            del res['I_single_shot']
+        if res['Q_single_shot'] is not None:
+            res['Qvar'] = np.var(res['Q_single_shot'], axis=0)
+            del res['Q_single_shot']
+        # Calculate Zvar and SNR
+        if 'Ivar' in res and 'Qvar' in res:
+            res['Zvar'] = res['Ivar'] + 1j*res['Qvar']
+            signal = np.abs(res['Z'][...,1] - res['Z'][...,0])
+            noise = np.sqrt(np.mean(res['Ivar'], axis=-1) + np.mean(res['Qvar'], axis=-1))
+            res['SNR'] = signal / noise
+            del res['Ivar']
+            del res['Qvar']
+        res['readout_power'] = opx_amp2pow(self.params['readout_amps'], self.config['resonator_output_gain'])
+        return res
+
+    def _figtitle(self, Navg):
+        drivepower = opx_amp2pow(self.config['saturation_amp'])
+        return (
+            f"readout SNR,  Navg {Navg:.2e}\n"
+            f"resonator {self.config['resonatorLO']/1e9:.3f}GHz{self.config['resonatorIF']/1e6:+.3f}MHz\n"
+            f"qubit {self.config['qubitLO']/1e9:.3f}GHz{self.config['qubitIF']/1e6:+.3f}MHz\n"
+            f"{self.config['short_readout_len']:.0f}ns readout,  {self.config['resonator_output_gain']:+.1f}dB output gain\n"
+            f"{self.params['drive_len']:.0f}ns drive,  {drivepower:.1f}dBm{self.config['qubit_output_gain']:+.1f}dB"
+        )
+
+    def _initialize_liveplot(self, ax):
+        amps = self.params['readout_amps']  # V
+        power = opx_amp2pow(amps, self.config['resonator_output_gain'])
+        self.line, = ax.plot(power, np.full(power.size, np.nan))
+        ax.set_xlabel("readout power / dBm")
+        ax.set_ylabel("|SON-SOFF|")
+        ax.set_title(self._figtitle(self.params['Navg']), fontsize=8)
+        self.ax = ax
+
+    def _update_liveplot(self, ax, resulthandles):
+        res = self._retrieve_results(resulthandles)
+        if 'SNR' in res:
+            self.line.set_ydata(res['SNR'])
+            self.ax.set_ylabel('SNR')
+        elif res['Z'] is not None:
+            dist = np.abs(res['Z'][:,1] - res['Z'][:,0])
+            self.line.set_ydata(dist)
+        ax.relim(), ax.autoscale(), ax.autoscale_view()
+        ax.set_title(self._figtitle((res['iteration'] or 0)+1), fontsize=8)
+
+    def find_best_snr(self, plot=True, filter_window_length=10):
+        res = self._retrieve_results()
+        if 'SNR' not in res:
+            raise PipelineException("No SNR data yet.")
+        SNR = res['SNR']
+        if SNR.size > 5:
+            filtwindow = min(filter_window_length, SNR.size//2)
+            if filtwindow != filter_window_length:
+                warnings.warn("Find best SNR: Reducing filter window to half number of samples.")
+            filt = savgol_filter(SNR, window_length=filtwindow, polyorder=2)
+            lim = np.mean(SNR)+3*np.std(SNR-filt)
+        else:
+            warnings.warn("Find best SNR: Not applying filter due to small number of samples.")
+            filt = SNR
+            lim = np.mean(SNR)+3*np.std(SNR)
+        bestidx = np.argmax(filt)
+        if plot is not None:
+            ax = self.ax if plot is True else plot
+            ax.plot(res['readout_power'], filt, 'k-')
+            ax.axhline(lim, color='gray', linestyle='--', linewidth=1)
+            ax.plot([res['readout_power'][bestidx]], [filt[bestidx]], '.', color='r')
+        if filt[bestidx] < lim:
+            raise PipelineException("SNR signal not clear enough to find peak.")
+        return self.params['readout_amps'][bestidx], res['readout_power'][bestidx]
+
+
 class QMTimeRabi (QMProgram):
     """Uses short readout pulse and saturation pulse."""
 
