@@ -43,7 +43,10 @@ qubitLO = 3.5e9
 qubitIF = -93e6
 
 # 4000 cycles = 16us
-cooldown_clk = 4000 # cycles
+# 8000 cycles = 32us
+# 8750 cycles = 35us
+# 12500 cycles = 50us
+cooldown_clk = 8750 # cycles
 
 ## Readout pulse parameters
 const_len = 10000
@@ -66,21 +69,12 @@ time_of_flight = 24 + 252
 saturation_len = 21000 # ns
 saturation_amp = 0.316
 
-# Pi pulse parameters
-pi_len = 100  # in units of ns
+# pi pulse parameters
+# Used for either/both square or gaussian pulses, depending on script
 pi_amp = 0.149  # in units of volts
-
 
 # Rotation angle for rotated readout demodulation
 rotation_angle = (-0/180) * np.pi  # angle in degrees
-
-# Used to correct for IQ mixer imbalances
-def IQ_imbalance(g, phi):
-    c = np.cos(phi)
-    s = np.sin(phi)
-    N = 1 / ((1 - g ** 2) * (2 * c ** 2 - 1))
-    return [float(N * x) for x in [(1 - g) * c, (1 + g) * s, (1 - g) * s, (1 + g) * c]]
-
 
 qmconfig = {
 
