@@ -2194,19 +2194,18 @@ class QMRelaxation (QMProgram):
         # minimum duration: 4cycles = 16ns
         drivelen = self.params['drive_len_ns']
         maxdelay = self.params['max_delay_ns']
-        wflen = int(np.ceil(drivelen/16)*16)
+        wflen = max(16, int(np.ceil(drivelen/4)*4)+4)
         self.params['delay_ns'] = np.arange(0, maxdelay, 1)
 
         assert maxdelay % 4 == 0
+        assert maxdelay > 16
 
         # Remember: baking modifies the qmconfig but this class instance uses its own deep-copy.
         baked_saturation = []
         for l in range(0, 4):
             with baking(self.config['qmconfig'], padding_method='none') as bake:
                 wf = np.zeros(wflen)
-                wf[-drivelen-l:] = self.config['pi_amp']
-                if l > 0:
-                    wf[-l:] = 0
+                wf[wflen-drivelen-l:wflen-l] = self.config['pi_amp']
                 bake.add_op('drive_%d'%l, 'qubit', [wf, [0]*wflen])
                 bake.play('drive_%d'%l, 'qubit')
             baked_saturation.append(bake)
@@ -2239,7 +2238,7 @@ class QMRelaxation (QMProgram):
                         qua.save(I, I_st)
                         qua.save(Q, Q_st)
                         qua.wait(self.config['cooldown_clk'], 'resonator')
-                        qua.wait(rand.rand_int(50)+4, 'resonator')
+                        qua.wait(rand.rand_int(100)+4, 'resonator')
 
                 with qua.for_(t4, 4, t4 < maxdelay//4, t4 + 1):
                     for i in range(4):
@@ -2254,7 +2253,7 @@ class QMRelaxation (QMProgram):
                         qua.save(I, I_st)
                         qua.save(Q, Q_st)
                         qua.wait(self.config['cooldown_clk'], 'resonator')
-                        qua.wait(rand.rand_int(50)+4, 'resonator')
+                        qua.wait(rand.rand_int(100)+4, 'resonator')
 
             with qua.stream_processing():
                 n_st.save('iteration')
@@ -2289,6 +2288,38 @@ class QMRelaxation (QMProgram):
         self.line.set_ydata(np.unwrap(np.angle(res['Z'])))
         ax.relim(), ax.autoscale(), ax.autoscale_view()
         ax.set_title(self._figtitle((res['iteration'] or 0)+1), fontsize=8)
+
+    def check_timing(self, duration_cycles=25000, plot=True):
+        """Simulate program and check alignment of drive and readout alignment.
+        Returns the alignment timing in ns.
+        """
+        if not hasattr(self, 'qmprog'):
+            self._make_program()
+        simulate_config = SimulationConfig(duration=duration_cycles)
+        job = self.qmm.simulate(self.config['qmconfig'], self.qmprog, simulate_config)
+
+        if plot:
+            plt.figure()
+            job.get_simulated_samples().con1.plot()
+
+        analog = job.get_simulated_samples().con1.analog
+        drive = (analog['3'] - analog['3'][0]) + 1j * (analog['4'] - analog['4'][0])
+        read = (analog['7'] - analog['7'][0]) + 1j * (analog['8'] - analog['8'][0])
+        # end of drive pulses, last nonzero sample
+        # starts with second drive pulse
+        drivestop = np.nonzero(drive)[0][:-1][np.diff(np.nonzero(drive)[0]) > 1][1:]
+        # start of readout pulses, first nonzero sample
+        # starts with second readout pulse
+        readstart = np.nonzero(read)[0][1:][np.diff(np.nonzero(read)[0]) > 1]
+        if plot:
+            plt.scatter(drivestop, [0]*drivestop.size)
+            plt.scatter(readstart, [0]*readstart.size, color='C2')
+
+        l = min(readstart.size, drivestop.size)
+        delay = readstart[:l] - drivestop[:l]
+        print("Waveform delay, first non-zero readout sample - last non-zero drive sample (ns)")
+        print(repr(delay))
+        return delay
 
 
 class QMRamsey (QMProgram):
