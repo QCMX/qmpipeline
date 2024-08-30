@@ -2828,8 +2828,8 @@ class QMRamseyChevronRepeat (QMProgram):
             Q = qua.declare(qua.fixed)
             t_st = qua.declare_stream() # for timestamps
             n_st = qua.declare_stream()
-            I_st = qua.declare_stream()
-            Q_st = qua.declare_stream()
+            I_st, Q_st = qua.declare_stream(), qua.declare_stream()
+            Ig_st, Qg_st = qua.declare_stream(), qua.declare_stream()
             rand = qua.lib.Random()
 
             qua.update_frequency('resonator', self.config['resonatorIF'])
@@ -2842,6 +2842,16 @@ class QMRamseyChevronRepeat (QMProgram):
 
                     with qua.for_(*from_array(f, qubitIFs)):
                         qua.update_frequency('qubit', f)
+
+                        # Ground state reference, no drive
+                        qua.align()
+                        qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator', None,
+                            qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
+                            qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
+                        qua.save(I, Ig_st)
+                        qua.save(Q, Qg_st)
+                        qua.wait(self.config['cooldown_clk'], 'resonator')
+                        qua.wait(rand.rand_int(50)+4, 'resonator')
 
                         # short case, not including wait==waitB+16
                         for j in range(waitB+16):
@@ -2881,9 +2891,21 @@ class QMRamseyChevronRepeat (QMProgram):
                 t_st.with_timestamps().save_all('t')
                 I_st.buffer(self.params['Navg'], len(qubitIFs), maxdelay).map(qua.FUNCTIONS.average(0)).save_all('I')
                 Q_st.buffer(self.params['Navg'], len(qubitIFs), maxdelay).map(qua.FUNCTIONS.average(0)).save_all('Q')
+                Ig_st.buffer(self.params['Navg'], len(qubitIFs)).map(qua.FUNCTIONS.average(0)).save_all('Ig')
+                Qg_st.buffer(self.params['Navg'], len(qubitIFs)).map(qua.FUNCTIONS.average(0)).save_all('Qg')
 
         self.qmprog = prog
         return prog
+
+    def _retrieve_results(self, resulthandles=None):
+        """Also merges Ig and Qg into Zg."""
+        res = super()._retrieve_results(resulthandles)
+        if res['Ig'] is not None and res['Qg'] is not None:
+            try:
+                res['Zg'] = res['Ig'] + 1j * res['Qg']
+            except ValueError:
+                res['Zg'] = None
+        return res
 
     def _figtitle(self, Niter):
         readoutpower = opx_amp2pow(self.config['short_readout_amp'])
@@ -3106,8 +3128,8 @@ class QMRamseyChevronRepeat_Gaussian (QMRamseyChevronRepeat):
             Q = qua.declare(qua.fixed)
             t_st = qua.declare_stream() # for timestamps
             n_st = qua.declare_stream()
-            I_st = qua.declare_stream()
-            Q_st = qua.declare_stream()
+            I_st, Q_st = qua.declare_stream(), qua.declare_stream()
+            Ig_st, Qg_st = qua.declare_stream(), qua.declare_stream()
             rand = qua.lib.Random()
 
             qua.update_frequency('resonator', self.config['resonatorIF'])
@@ -3120,6 +3142,16 @@ class QMRamseyChevronRepeat_Gaussian (QMRamseyChevronRepeat):
 
                     with qua.for_(*from_array(f, qubitIFs)):
                         qua.update_frequency('qubit', f)
+
+                        # Ground state reference, no drive
+                        qua.align()
+                        qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator', None,
+                            qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
+                            qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
+                        qua.save(I, Ig_st)
+                        qua.save(Q, Qg_st)
+                        qua.wait(self.config['cooldown_clk'], 'resonator')
+                        qua.wait(rand.rand_int(50)+4, 'resonator')
 
                         # short wait case
                         for j in range(waitA+waitB+16):
@@ -3159,6 +3191,8 @@ class QMRamseyChevronRepeat_Gaussian (QMRamseyChevronRepeat):
                 t_st.with_timestamps().save_all('t')
                 I_st.buffer(self.params['Navg'], len(qubitIFs), maxdelay).map(qua.FUNCTIONS.average(0)).save_all('I')
                 Q_st.buffer(self.params['Navg'], len(qubitIFs), maxdelay).map(qua.FUNCTIONS.average(0)).save_all('Q')
+                Ig_st.buffer(self.params['Navg'], len(qubitIFs)).map(qua.FUNCTIONS.average(0)).save_all('Ig')
+                Qg_st.buffer(self.params['Navg'], len(qubitIFs)).map(qua.FUNCTIONS.average(0)).save_all('Qg')
 
         self.qmprog = prog
         return prog
@@ -3279,8 +3313,9 @@ if __name__ == '__main__':
     # p = QMPowerRabi_Gaussian(qmm, config, Navg=1e6, duration_ns=16, sigma_ns=4, drive_amps=np.linspace(0, 0.1, 5))
     # p.simulate(20000, plot=True)
 
-    # p = QMRelaxation(qmm, config, Navg=100, drive_len_ns=8, max_delay_ns=52)
-    # p.simulate(200000, plot=True)
+    config.qubitIF = 0
+    p = QMRelaxation(qmm, config, Navg=100, drive_len_ns=8, max_delay_ns=52)
+    p.check_timing(20000, plot=True)
 
     # p = QMRamsey(qmm, config, Navg=100, drive_len_ns=8, max_delay_ns=52)
     # p.simulate(300000, plot=True)
