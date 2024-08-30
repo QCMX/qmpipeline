@@ -46,7 +46,7 @@ assert fluxbias.output() == 'on'
 
 #%%
 
-f2LOs = [2e9, 2.4e9, 2.8e9, 3.2e9, 3.6e9, 4.0e9, 4.4e9]
+f2LOs = [2e9, 2.7e9, 3.4e9, 4.1e9]
 
 mixercal = qmtools.QMMixerCalibration(qmm, config_pipeline, qubitLOs=f2LOs)
 
@@ -56,7 +56,7 @@ importlib.reload(qminit)
 
 filename = '{datetime}_qmpipeline_2tone_LO'
 fpath = data_path(filename, datesuffix='_qm')
-Vgate = np.concatenate([np.linspace(-4.04, -3.96, 201)])
+Vgate = np.concatenate([np.linspace(-4.2, -4.3, 501)])
 # Vgate = np.array([-3.986])
 Vstep = np.mean(np.abs(np.diff(Vgate)))
 print(f"Vgate measurement step: {Vstep*1e6:.1f}uV avg")
@@ -64,7 +64,7 @@ Ngate = Vgate.size
 assert len(Vgate) == 1 or Vstep > 1.19e-6, "Vstep smaller than Basel resolution"
 
 
-fr_range = np.arange(200e6, 212e6, 0.05e6) # IF Hz
+fr_range = np.arange(200e6, 222e6, 0.05e6) # IF Hz
 
 try:
     if vna.rf_output():
@@ -75,7 +75,7 @@ except:
 
 
 jpameta = {
-    'fluxbias': fluxbias.current(), # A
+    # 'fluxbias': fluxbias.current(), # A
     'fpump': float(jpapump.query(':source:freq?')),
     'Ppump': float(jpapump.query(':source:power?')),
     'output': jpapump.query_int(':output?') == 1
@@ -163,23 +163,23 @@ try:
             continue
         localconfig['resonatorIF'] = resonatorfit[0][0]
 
-        #######
-        # Resonator noise
-        prog = progs[1] = qmtools.QMNoiseSpectrum(qmm, localconfig, Nsamples=100000, fcut_Hz=20e3)
-        results['resonator_noise'][i] = prog.run(plot=axs[1,1])
-        axs[1,1].set_xlim(-210,210)
+        # #######
+        # # Resonator noise
+        # prog = progs[1] = qmtools.QMNoiseSpectrum(qmm, localconfig, Nsamples=100000, fcut_Hz=20e3)
+        # results['resonator_noise'][i] = prog.run(plot=axs[1,1])
+        # axs[1,1].set_xlim(-210,210)
 
-        #######
-        # Readout power
-        # Turn up octave output and not OPX
-        localconfig['resonator_output_gain'] = -20
-        localconfig['qmconfig']['waveforms']['readout_wf']['sample'] = 0.316
+        # #######
+        # # Readout power
+        # # Turn up octave output and not OPX
+        # localconfig['resonator_output_gain'] = -20
+        # localconfig['qmconfig']['waveforms']['readout_wf']['sample'] = 0.316
 
-        prog = progs[2] = qmtools.QMResonatorSpec_P2(
-            qmm, localconfig, Navg=100,
-            resonatorIFs=fr_range,
-            readout_amps=np.logspace(np.log10(0.00316), np.log10(0.316), 29))
-        results['resonator_P1'][i] = prog.run(plot=axs[0,1])
+        # prog = progs[2] = qmtools.QMResonatorSpec_P2(
+        #     qmm, localconfig, Navg=100,
+        #     resonatorIFs=fr_range,
+        #     readout_amps=np.logspace(np.log10(0.00316), np.log10(0.316), 29))
+        # results['resonator_P1'][i] = prog.run(plot=axs[0,1])
 
         # restore readout power
         localconfig['qmconfig']['waveforms']['readout_wf']['sample'] = baseconfig['qmconfig']['waveforms']['readout_wf']['sample']
@@ -190,7 +190,7 @@ try:
         # 2tone spectroscopy qubit vs power & update qubit IF
         # Note: have room-T amp, max input is +4dBm
 
-        localconfig['qubit_output_gain'] = -5
+        localconfig['qubit_output_gain'] = 0
     
         for j, lo in enumerate(f2LOs):
             localconfig['qubitLO'] = lo
@@ -200,10 +200,10 @@ try:
             # Note: Setting LO in qmconfig.mixers is without effect because that section
             # is overwritten with data from the calibration database by the QM manager.
 
-            fq_amps = np.logspace(np.log10(0.001), np.log10(0.316), 11)
+            fq_amps = np.logspace(-60/20, -10/20, 6) * 0.3162
             assert np.max(fq_amps) <= 0.3161 # max 0dBm
             prog = progs[3+j] = qmtools.QMQubitSpec_P2(
-                qmm, localconfig, Navg=400, qubitIFs=np.arange(-300e6, +300e6, 2e6),
+                qmm, localconfig, Navg=200, qubitIFs=np.arange(-350e6, +350e6, 2e6),
                 drive_amps=fq_amps)
             results[f'qubit_P2:LO{lo/1e9:.2f}GHz'][i] = prog.run(plot=axs[j%2,2+int(j/2)])
 

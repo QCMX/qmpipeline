@@ -66,8 +66,8 @@ importlib.reload(qminit)
 
 filename = '{datetime}_qmpipeline'
 fpath = data_path(filename, datesuffix='_qm')
-Vgate = np.linspace(-4.885, -4.895, 51)
-# Vgate = np.array([-4.864])
+Vgate = np.linspace(-4.228, -4.25, 11)
+Vgate = np.array([-4.248])
 Vstep = np.mean(np.abs(np.diff(Vgate)))
 print(f"Vgate measurement step: {Vstep*1e6:.1f}uV avg")
 Ngate = Vgate.size
@@ -77,7 +77,7 @@ fr_range = np.arange(200e6, 225e6, 0.05e6) # IF Hz
 
 # Length / distance of pulses for Rabi / Ramsey / Relaxation
 # It's nice to have the same length for everything to plot cohesive results later
-PROTOCOL_DURATION = 180
+PROTOCOL_DURATION = 500
 T1DURATION = 600
 
 # Vhyst = -5.20
@@ -140,6 +140,7 @@ results = {
     'qubit:1hp': [None]*Ngate,
     'qubit:1reLO': [None]*Ngate,
     'qubit:2': [None]*Ngate,
+    'qubit:3': [None]*Ngate,
     'time_rabi:1': [None]*Ngate,
     'time_rabi:2': [None]*Ngate,
     'time_rabi:3': [None]*Ngate,
@@ -147,9 +148,10 @@ results = {
     'time_rabi_chevrons:2': [None]*Ngate,
     'power_rabi:gaussian_8ns': [None]*Ngate,
     'power_rabi:gaussian_16ns': [None]*Ngate,
-    'relaxation': [None]*Ngate,
-    'ramsey_chevron_repeat:gaussian': [None]*Ngate,
-    'ramsey_chevron_repeat:square': [None]*Ngate,
+    'relaxation:8ns': [None]*Ngate,
+    'relaxation:16ns': [None]*Ngate,
+    'ramsey_chevron_repeat:gaussian_8ns': [None]*Ngate,
+    'ramsey_chevron_repeat:gaussian_16ns': [None]*Ngate,
 }
 resonator = np.full((Vgate.size, fr_range.size), np.nan+0j)
 frfit = np.full((Vgate.size, 4, 2), np.nan)
@@ -160,7 +162,7 @@ axs[0,0].set_xlabel('Vgate / V')
 axs[0,0].set_ylabel('df / MHz')
 axs[0,0].set_title('Cavity resonance vs gate')
 
-progs = [None]*14
+progs = [None]*15
 estimator = DurationEstimator(Ngate)
 try:
     for i in range(Ngate):
@@ -275,10 +277,10 @@ try:
         qubittuneconfig = deepcopy(localconfig)
         qubittuneconfig['qubit_output_gain'] = -10
         qubittuneconfig['saturation_amp'] = 10**(-20/20) * AMP0dBm
-        if fqest < 3.85e9:
+        if fqest < 3.8e9:
             qubittunefs = np.arange(-200e6, 100e6, 1e6) + max(np.round(localconfig['qubitIF']/10e6)*10e6, -350e6)
         else:
-            qubittunefs = np.arange(-200e6, 300e6, 1e6) + max(np.round(localconfig['qubitIF']/10e6)*10e6, -350e6)
+            qubittunefs = np.arange(-200e6, 400e6, 1e6) + max(np.round(localconfig['qubitIF']/10e6)*10e6, -350e6)
         qubittunefs = qubittunefs[qubittunefs >= -450e6]
         if len(qubittunefs) < 10:
             qubittunefs = np.arange(-450e6, -50e6, 2e6)
@@ -287,22 +289,8 @@ try:
             qmm, qubittuneconfig, Navg=1000,
             qubitIFs=qubittunefs)
         results['qubit:1'][i] = prog.run(plot=axs[0,4])
-        try:
-            fqIF = prog.find_dip(ax=axs[0,4])
-            fq = fqIF + qubitLO
-            print(f"  Qubit moved {(fqIF-localconfig['qubitIF'])/1e6:+.3f}MHz")
-            localconfig['qubitIF'] = fqIF
-            print(f"  Updated qubitIF to {localconfig['qubitIF']/1e6:.3f}MHz")
-        except qmtools.PipelineException as e:
-            print("Qubit update failed:", repr(e))
-            print("Trying with stronger drive")
-            qubittuneconfig['qubit_output_gain'] = 0
-            qubittuneconfig['saturation_amp'] = 10**(-20/20) * AMP0dBm
-
-            prog = progs[4] = qmtools.QMQubitSpec(
-                qmm, qubittuneconfig, Navg=1000,
-                qubitIFs=qubittunefs)
-            results['qubit:1hp'][i] = prog.run(plot=axs[0,4])
+        MIN_fq_FINETUNE = 2.5e9
+        if fqest > MIN_fq_FINETUNE:
             try:
                 fqIF = prog.find_dip(ax=axs[0,4])
                 fq = fqIF + qubitLO
@@ -310,7 +298,25 @@ try:
                 localconfig['qubitIF'] = fqIF
                 print(f"  Updated qubitIF to {localconfig['qubitIF']/1e6:.3f}MHz")
             except qmtools.PipelineException as e:
-                print("Qubit update failed, keep original estimate:", repr(e))
+                print("Qubit update failed:", repr(e))
+                print("Trying with stronger drive")
+                qubittuneconfig['qubit_output_gain'] = 0
+                qubittuneconfig['saturation_amp'] = 10**(-20/20) * AMP0dBm
+    
+                prog = progs[4] = qmtools.QMQubitSpec(
+                    qmm, qubittuneconfig, Navg=1000,
+                    qubitIFs=qubittunefs)
+                results['qubit:1hp'][i] = prog.run(plot=axs[0,4])
+                try:
+                    fqIF = prog.find_dip(ax=axs[0,4])
+                    fq = fqIF + qubitLO
+                    print(f"  Qubit moved {(fqIF-localconfig['qubitIF'])/1e6:+.3f}MHz")
+                    localconfig['qubitIF'] = fqIF
+                    print(f"  Updated qubitIF to {localconfig['qubitIF']/1e6:.3f}MHz")
+                except qmtools.PipelineException as e:
+                    print("Qubit update failed, keep original estimate:", repr(e))
+        else:
+            print("Not updating qubit freq < 2.5GHz")
 
         if fqest >= 3.85e9:
             fqest2 = localconfig['qubitLO'] + localconfig['qubitIF']
@@ -352,7 +358,7 @@ try:
         prog = progs[5] = qmtools.QMReadoutSNR_P1(
             qmm, localconfig, Navg=3e3,
             readout_amps=np.logspace(-60/20, 0, 37) * AMP0dBm,
-            drive_len=100)
+            drive_len=1000)
         results['readoutSNR_P1'][i] = res = prog.run(plot=axs[1,2])
 
         # Optimize readout power based on best SNR result
@@ -382,7 +388,7 @@ try:
         localconfig['qubit_output_gain'] = -15 #baseconfig['qubit_output_gain']
 
         prog = progs[6] = qmtools.QMTimeRabi(
-            qmm, localconfig, Navg=1e4,
+            qmm, localconfig, Navg=5e3,
             max_duration_ns=PROTOCOL_DURATION,
             drive_read_overlap_cycles=0)
         results['time_rabi:2'][i] = prog.run(plot=axs[0,3])
@@ -391,7 +397,7 @@ try:
         localconfig['qubit_output_gain'] = 0
 
         prog = progs[6] = qmtools.QMTimeRabi(
-            qmm, localconfig, Navg=1e4,
+            qmm, localconfig, Navg=5e3,
             max_duration_ns=PROTOCOL_DURATION,
             drive_read_overlap_cycles=0)
         results['time_rabi:3'][i] = prog.run(plot=axs[0,3])
@@ -406,22 +412,22 @@ try:
 
         prog = progs[7] = qmtools.QMTimeRabiChevrons(
             qmm, localconfig, Navg=200,
-            qubitIFs=np.arange(-400e6, 10e6, 10e6),
+            qubitIFs=np.arange(-400e6, 10e6, 2e6),
             max_duration_ns=PROTOCOL_DURATION,
             drive_read_overlap_cycles=0)
         results['time_rabi_chevrons:1'][i] = prog.run(plot=axs[0,5])
 
-        localconfig['saturation_amp'] = 0.316
-        localconfig['qubit_output_gain'] = 0
+        # localconfig['saturation_amp'] = 0.316
+        # localconfig['qubit_output_gain'] = 0
 
-        axs[0,6].axhline(localconfig['qubitIF']/1e6, color='r', linestyle='--', linewidth=0.8, zorder=100)
+        # axs[0,6].axhline(localconfig['qubitIF']/1e6, color='r', linestyle='--', linewidth=0.8, zorder=100)
 
-        prog = progs[8] = qmtools.QMTimeRabiChevrons(
-            qmm, localconfig, Navg=200,
-            qubitIFs=np.arange(-400e6, 10e6, 10e6),
-            max_duration_ns=PROTOCOL_DURATION,
-            drive_read_overlap_cycles=0)
-        results['time_rabi_chevrons:2'][i] = prog.run(plot=axs[0,6])
+        # prog = progs[8] = qmtools.QMTimeRabiChevrons(
+        #     qmm, localconfig, Navg=200,
+        #     qubitIFs=np.arange(-400e6, 10e6, 10e6),
+        #     max_duration_ns=PROTOCOL_DURATION,
+        #     drive_read_overlap_cycles=0)
+        # results['time_rabi_chevrons:2'][i] = prog.run(plot=axs[0,6])
 
         ##############
         # Qubit Spec 1D
@@ -429,14 +435,15 @@ try:
             qmm, qubittuneconfig, Navg=500,
             qubitIFs=qubittunefs)
         results['qubit:2'][i] = prog.run(plot=axs[0,4])
-        try:
-            fqIF = prog.find_dip(ax=axs[0,4])
-            fq = fqIF + qubitLO
-            print(f"  Qubit moved {(fqIF-localconfig['qubitIF'])/1e6:+.3f}MHz")
-            localconfig['qubitIF'] = fqIF
-            print(f"  Updated qubitIF to {localconfig['qubitIF']/1e6:.3f}MHz")
-        except qmtools.PipelineException as e:
-            print("Qubit update failed, keep estimate:", repr(e))
+        if fqest > MIN_fq_FINETUNE:
+            try:
+                fqIF = prog.find_dip(ax=axs[0,4])
+                fq = fqIF + qubitLO
+                print(f"  Qubit moved {(fqIF-localconfig['qubitIF'])/1e6:+.3f}MHz")
+                localconfig['qubitIF'] = fqIF
+                print(f"  Updated qubitIF to {localconfig['qubitIF']/1e6:.3f}MHz")
+            except qmtools.PipelineException as e:
+                print("Qubit update failed, keep estimate:", repr(e))
 
         #######
         # Power Rabi, Gaussian
@@ -445,11 +452,11 @@ try:
 
         prog = progs[10] = qmtools.QMPowerRabi_Gaussian(
             qmm, localconfig, Navg=1e4, duration_ns=32, sigma_ns=8,
-            drive_amps=np.linspace(0, AMP0dBm, 81))
+            drive_amps=np.linspace(0, AMP0dBm, 160))
         results['power_rabi:gaussian_16ns'][i] = prog.run(plot=axs[1,3])
 
         try:
-            fit = prog.fit_cosine(ax=axs[1,3], period0=0.13, plotp0=True)
+            fit = prog.fit_pi_pulse(ax=axs[1,3], period0=0.13, plotp0=True)
             results['power_rabi:gaussian_16ns'][i]['fit'] = fit
             # Pi amp limited to +0dBm
             localconfig['pi_amp'] = min(10**(0/20)*AMP0dBm, fit['popt'][0] / 2)
@@ -458,24 +465,79 @@ try:
             continue
 
         #######
-        # Ramsey Chevrons, Gaussian
-
+        # Ramsey Chevrons, Gaussian 16ns
         fc = np.round(localconfig['qubitIF']/10e6)*10e6
-        ifs = np.arange(-110e6, 110e6, 5e6) + fc #np.linspace(-80e6, 80e6, 17) + fc
+        ifs = np.arange(-100e6, 100e6, 1e6) + fc #np.linspace(-80e6, 80e6, 17) + fc
         prog = progs[11] = qmtools.QMRamseyChevronRepeat_Gaussian(
-            qmm, localconfig, qubitIFs=ifs, Nrep=10, Navg=50,
+            qmm, localconfig, qubitIFs=ifs, Nrep=50, Navg=10,
             drive_len_ns=32, sigma_ns=8, readout_delay_ns=16,
             max_delay_ns=PROTOCOL_DURATION)
-        results['ramsey_chevron_repeat:gaussian'][i] = prog.run(plot=axs[1,5])
+        results['ramsey_chevron_repeat:gaussian_16ns'][i] = prog.run(plot=axs[1,5])
 
         #######
         # Relaxation
         # Uses pi pulse amplitude from config
-
         prog = progs[12] = qmtools.QMRelaxation(
             qmm, localconfig, Navg=2e3, drive_len_ns=16,
             max_delay_ns=T1DURATION)
-        results['relaxation'][i] = prog.run(plot=axs[1,4])
+        results['relaxation:16ns'][i] = prog.run(plot=axs[1,4])
+
+        ##############
+        # Qubit Spec 1D
+        prog = progs[9] = qmtools.QMQubitSpec(
+            qmm, qubittuneconfig, Navg=500,
+            qubitIFs=qubittunefs)
+        results['qubit:3'][i] = prog.run(plot=axs[0,4])
+        if fqest > MIN_fq_FINETUNE:
+            try:
+                fqIF = prog.find_dip(ax=axs[0,4])
+                fq = fqIF + qubitLO
+                print(f"  Qubit moved {(fqIF-localconfig['qubitIF'])/1e6:+.3f}MHz")
+                localconfig['qubitIF'] = fqIF
+                print(f"  Updated qubitIF to {localconfig['qubitIF']/1e6:.3f}MHz")
+            except qmtools.PipelineException as e:
+                print("Qubit update failed, keep estimate:", repr(e))
+
+        #######
+        # Power Rabi, Gaussian 8ns
+        # Note: max CW input to roomT amplifier is +4dBm
+        localconfig['qubit_output_gain'] = 0 # max +4
+
+        prog = progs[10] = qmtools.QMPowerRabi_Gaussian(
+            qmm, localconfig, Navg=1e4, duration_ns=16, sigma_ns=4,
+            drive_amps=np.linspace(0, AMP0dBm, 81))
+        results['power_rabi:gaussian_8ns'][i] = prog.run(plot=axs[1,3])
+
+        try:
+            fit = prog.fit_pi_pulse(ax=axs[1,3], period0=0.13, plotp0=True)
+            results['power_rabi:gaussian_8ns'][i]['fit'] = fit
+            if fit['popt'][0] < results['power_rabi:gaussian_16ns'][i]['fit']['popt'][0]:
+                print("8ns Gaussian Power rabi period fit failed. default to max power.")
+                localconfig['pi_amp'] = AMP0dBm
+            else:
+                # Pi amp limited to +0dBm
+                localconfig['pi_amp'] = min(10**(0/20)*AMP0dBm, fit['popt'][0] / 2)
+        except Exception as e:
+            print("Could not find pi pulse amplitude:", repr(e))
+            continue
+
+        #######
+        # Ramsey Chevrons, Gaussian 8ns
+        fc = np.round(localconfig['qubitIF']/10e6)*10e6
+        ifs = np.arange(-100e6, 100e6, 1e6) + fc #np.linspace(-80e6, 80e6, 17) + fc
+        prog = progs[13] = qmtools.QMRamseyChevronRepeat_Gaussian(
+            qmm, localconfig, qubitIFs=ifs, Nrep=50, Navg=10,
+            drive_len_ns=16, sigma_ns=4, readout_delay_ns=8,
+            max_delay_ns=PROTOCOL_DURATION)
+        results['ramsey_chevron_repeat:gaussian_8ns'][i] = prog.run(plot=axs[1,6])
+
+        #######
+        # Relaxation
+        # Uses pi pulse amplitude from config
+        prog = progs[12] = qmtools.QMRelaxation(
+            qmm, localconfig, Navg=2e3, drive_len_ns=8,
+            max_delay_ns=T1DURATION)
+        results['relaxation:8ns'][i] = prog.run(plot=axs[1,4])
 
         estimator.step(i)
 finally:
