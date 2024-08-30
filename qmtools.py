@@ -91,7 +91,7 @@ import warnings
 from copy import deepcopy
 from uncertainties import ufloat
 from scipy.optimize import curve_fit
-from scipy.signal import savgol_filter
+from scipy.signal import savgol_filter, find_peaks
 from datetime import datetime
 
 import numpy as np
@@ -1999,6 +1999,8 @@ class QMPowerRabi (QMProgram):
             pltkw={'color': 'k', 'linewidth': 1}, printinfo=True):
         """Fit slanted sine shape to data.
 
+        Assumes first amplitude in drive_amps to be zero (ground state).
+
         Returns tuple of (optimal, uncertainty), each being an array of
         period, cosine amplitude, background slant, background offset
         """
@@ -2033,6 +2035,66 @@ class QMPowerRabi (QMProgram):
             if plotp0:
                 ax.plot(amps, func(amps, *p0), '--', **pltkw)
         return {
+            'signal': signal,
+            'p0': p0,
+            'parameter_names': paramnames,
+            'popt': popt,
+            'perr': perr,
+            'model': func(amps, *popt)
+        }
+
+    def fit_pi_pulse(
+            self, result=None, ax=None, period0=0.05, plotp0=False,
+            pltkw={'color': 'k', 'linewidth': 1}, printinfo=True):
+        """Fit slanted sine shape to data, after selecting first period.
+
+        Assumes first amplitude in drive_amps to be zero (ground state).
+
+        Returns tuple of (optimal, uncertainty), each being an array of
+        period, cosine amplitude, background slant, background offset
+        """
+        res = self._retrieve_results() if result is None else result
+        amps = res['drive_amps']
+        func = QMPowerRabi.cosine
+        signal = fullsignal = np.abs(res['Z'] - res['Z'][0])
+        maxmin = np.max(signal)-np.min(signal)
+
+        peaks, props = find_peaks(signal, prominence=maxmin/3)
+        if peaks.size and peaks[0] >= 3:
+            # cut fit data to 2 * first peak position
+            amps = amps[:peaks[0]*2]
+            signal = signal[:peaks[0]*2]
+            maxmin = np.max(signal)-np.min(signal)
+            period0 = amps[peaks[0]]*2
+
+        p0 = self.last_p0 = [
+            period0, # period
+            maxmin/2.5, # amplitude
+            max(amps)/2, # decay
+            0, # bkg slant
+            np.mean(signal) # bkg offset
+        ]
+        bounds = (
+            [amps[2]-amps[0], 0, 0, -np.inf, np.min(signal)],
+            [np.max(amps)*2, maxmin/2, np.inf, np.inf, np.max(signal)])
+        print(p0)
+        print(bounds)
+        popt, pcov = curve_fit(
+            func, amps, signal, p0=p0, bounds=bounds)
+        perr = np.sqrt(np.diag(pcov))
+        paramnames = ["period", "amplitude", "decay", "slope", "offset"]
+        if printinfo:
+            uval = [ufloat(opt, err) for opt, err in zip(popt, perr)]
+            print("  Fit cosine to Power Rabi data")
+            for r, name in zip(uval, paramnames):
+                print(f"    {name:6s} {r}")
+        if ax:
+            ax.plot(amps, func(amps, *popt), '-', **pltkw)
+            if plotp0:
+                ax.plot(res['drive_amps'][peaks], fullsignal[peaks], '.', **pltkw)
+                ax.plot(amps, func(amps, *p0), '--', **pltkw)
+        return {
+            'drive_amps': amps,
             'signal': signal,
             'p0': p0,
             'parameter_names': paramnames,
