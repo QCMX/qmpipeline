@@ -14,12 +14,15 @@ Configuration
 Not independent of configuration! E.g. names of waveforms are hard coded.
 
 Need configuration that
+
 - contains quantum machine config and waveform information
 - contains octave settings
 - may be modified to adjust frequencies, amplitudes and possibly waveform lengths
 - may be modified by baking new waveforms
 - saved alongside data.
+
 Therefore
+
 - needs to be python primitive type that can be deep-copied to allow modifications
 - mostly non-redundant to avoid inconsistencies after update waveform properties
 
@@ -226,7 +229,7 @@ class QMProgram (object):
         Niter = self.params.get('Niter', self.params.get('Navg', np.nan))
         try:
             while resulthandles.is_processing():
-                if hasiter:
+                if hasiter and printn:
                     iteration = resulthandles.iteration.fetch_all() or 1
                     print(
                         f"iteration={iteration}, remaining: {(Niter-iteration) * (time.time()-tstart)/iteration:.0f}s")
@@ -864,8 +867,8 @@ class QMQubitSpec (QMProgram):
         return prog
 
     def _initialize_liveplot(self, ax):
-        freqs = self.params['qubitIFs']
-        line, = ax.plot(freqs/1e6, np.full(len(freqs), np.nan))
+        freqs = self.params['qubitIFs'] + self.config['qubitLO']
+        line, = ax.plot(freqs/1e9, np.full(len(freqs), np.nan))
         ax.set_title("qubit spectroscopy analysis")
         readoutpower = opx_amp2pow(self.config['readout_amp'])
         drivepower = opx_amp2pow(self.config['saturation_amp'])
@@ -877,7 +880,7 @@ class QMQubitSpec (QMProgram):
             f"{self.config['readout_len']/1e3:.0f}us readout at {readoutpower:.1f}dBm{self.config['resonator_output_gain']:+.1f}dB\n"
             f"{self.config['saturation_len']/1e3:.0f}us drive at {drivepower:.1f}dBm{self.config['qubit_output_gain']:+.1f}dB",
             fontsize=8)
-        ax.set_xlabel(f"drive IF [MHz] + {self.config['qubitLO']/1e9:f}GHz")
+        ax.set_xlabel(f"drive / GHz")
         ax.set_ylabel("arg S")
         self.line = line
         self.ax = ax
@@ -922,7 +925,7 @@ class QMQubitSpec (QMProgram):
 
         fq = qubitIFs[qi]
         if ax is not None:
-            ax.plot([fq/1e6], [argZ[qi]], '.', color='r')
+            ax.plot([(fq+self.config['qubitLO'])/1e9], [argZ[qi]], '.', color='r')
         return fq
 
 
