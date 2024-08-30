@@ -566,12 +566,14 @@ class QMResonatorSpec (QMProgram):
         freqs = res['resonatorIFs']
         func = QMResonatorSpec.lorentzian_amplitude
         Z = res['Z']
+
         p0 = self.last_p0 = [
-            (np.mean(freqs[:5]) + np.mean(freqs[-5:])) / 2,  # f0
+            freqs[np.argmax(np.abs(Z))], #(np.mean(freqs[:5]) + np.mean(freqs[-5:])) / 2,  # f0
             (np.max(freqs[-1])-np.min(freqs[0])) / 3,  # width
             np.max(np.abs(Z)),  # amplitude
             np.angle(Z[np.argmax(np.abs(Z))])  # angle
         ]
+        print(p0)
         popt, pcov = curve_fit(
             func, freqs, Z.view(float), p0=p0,
             bounds=(
@@ -1987,9 +1989,10 @@ class QMPowerRabi (QMProgram):
         self.qmprog = prog
         return prog
 
+    @staticmethod
     def cosine(amp, period, a, decay, bkg_slope, bkg_offs):
         """Cosine function with background offset and slope to use for fitting."""
-        return a * np.cos(2*np.pi * amp / period) * np.exp(-amp/decay) + bkg_slope * amp + bkg_offs
+        return -a * np.cos(2*np.pi * amp / period) * np.exp(-amp/decay) + bkg_slope * amp + bkg_offs
 
     def fit_cosine(
             self, result=None, ax=None, period0=0.05, plotp0=False,
@@ -2002,33 +2005,41 @@ class QMPowerRabi (QMProgram):
         res = self._retrieve_results() if result is None else result
         amps = res['drive_amps']
         func = QMPowerRabi.cosine
-        argZ = np.unwrap(np.angle(res['Z']))
-        maxmin = np.max(argZ)-np.min(argZ)
+        signal = np.abs(res['Z'] - res['Z'][0])
+        maxmin = np.max(signal)-np.min(signal)
         p0 = self.last_p0 = [
             period0, # period
             maxmin/2.5, # amplitude
             max(amps)/2, # decay
             0, # bkg slant
-            np.mean(argZ) # bkg offset
+            np.mean(signal) # bkg offset
         ]
         bounds = (
-            [amps[2]-amps[0], 0, 0, -np.inf, np.min(argZ)],
-            [np.max(amps)*2, maxmin/2, np.inf, np.inf, np.max(argZ)])
+            [amps[2]-amps[0], 0, 0, -np.inf, np.min(signal)],
+            [np.max(amps)*2, maxmin/2, np.inf, np.inf, np.max(signal)])
         print(p0)
         print(bounds)
         popt, pcov = curve_fit(
-            func, amps, argZ, p0=p0, bounds=bounds)
+            func, amps, signal, p0=p0, bounds=bounds)
         perr = np.sqrt(np.diag(pcov))
+        paramnames = ["period", "amplitude", "decay", "slope", "offset"]
         if printinfo:
             res = [ufloat(opt, err) for opt, err in zip(popt, perr)]
             print("  Fit cosine to Power Rabi data")
-            for r, name in zip(res, ["period", "ampl", "decay", "slope", "offset"]):
+            for r, name in zip(res, paramnames):
                 print(f"    {name:6s} {r}")
         if ax:
             ax.plot(amps, func(amps, *popt), '-', **pltkw)
             if plotp0:
                 ax.plot(amps, func(amps, *p0), '--', **pltkw)
-        return popt, perr
+        return {
+            'signal': signal,
+            'p0': p0,
+            'parameter_names': paramnames,
+            'popt': popt,
+            'perr': perr,
+            'model': func(amps, *popt)
+        }
 
     def _figtitle(self, Navg):
         readoutpower = opx_amp2pow(self.config['short_readout_amp'])
@@ -2045,7 +2056,7 @@ class QMPowerRabi (QMProgram):
         amps = self.params['drive_amps']
         self.line, = ax.plot(amps, np.full(len(amps), np.nan))
         ax.set_xlabel("drive amplitude / V")
-        ax.set_ylabel("arg S")
+        ax.set_ylabel("|S - S0|")
         ax.set_title(self._figtitle(self.params['Navg']), fontsize=8)
         self.ax = ax
 
@@ -2053,7 +2064,7 @@ class QMPowerRabi (QMProgram):
         res = self._retrieve_results(resulthandles)
         if res['Z'] is None:
             return
-        self.line.set_ydata(np.unwrap(np.angle(res['Z'])))
+        self.line.set_ydata(np.abs(res['Z'] - res['Z'][0]))
         ax.relim(), ax.autoscale(), ax.autoscale_view()
         ax.set_title(self._figtitle((res['iteration'] or 0)+1), fontsize=8)
 
@@ -2280,7 +2291,7 @@ class QMRelaxation (QMProgram):
         delays = self.params['delay_ns']
         self.line, = ax.plot(delays, np.full(len(delays), np.nan))
         ax.set_xlabel("measurement delay / ns")
-        ax.set_ylabel("arg S")
+        ax.set_ylabel("| S - S0 |")
         ax.set_title(self._figtitle(self.params['Navg']), fontsize=8)
         self.ax = ax
 
@@ -2288,7 +2299,7 @@ class QMRelaxation (QMProgram):
         res = self._retrieve_results(resulthandles)
         if res['Z'] is None:
             return
-        self.line.set_ydata(np.unwrap(np.angle(res['Z'])))
+        self.line.set_ydata(np.abs(res['Z']-res['Z'][0]))
         ax.relim(), ax.autoscale(), ax.autoscale_view()
         ax.set_title(self._figtitle((res['iteration'] or 0)+1), fontsize=8)
 
