@@ -3267,6 +3267,213 @@ class QMRamseyChevronRepeat_Gaussian (QMRamseyChevronRepeat):
         #     raise PipelineException("Drive/readout waveform alignment not constant.")
         # return overlap
 
+
+class QMRamseyAnharmonicity (QMRamseyChevronRepeat):
+
+    def __init__(
+            self, qmm, config, Nrep, Navg, qubitIFs,
+            max_delay_ns, drive_len_ns, sigma_ns=None, readout_delay_ns=None):
+        """
+        Parameters
+        ----------
+        qmm : qm.QuantumMachineManager
+            Used to open new QuantumMachine
+        config : dict
+        Nrep : int
+            Number of repetitions.
+        Navg : int
+            Number of averages per repetition.
+        qubitIFs : numpy.ndarray
+            Drive intermediate frequencies.
+        max_delay_ns : int
+            Maximum pulse delay. Will run protocol for delays from 0ns to
+            max_delay_ns. Must be multiple of 4.
+        drive_len_ns : int
+            Total length of Gaussian pulse in ns.
+            Must be multiple of 8ns.
+        sigma_ns : float, optional
+            Width of Gaussian. If None, defaults to drive_len_ns / 4.
+        readout_delay_ns : int, optional
+            Delay of readout pulse after center of last pulse.
+            Must be multiple of 4ns.
+            If None, defaults to drive_len_ns/2 rounded up to next multiple of 4.
+        """
+        super().__init__(qmm, config, Nrep, Navg, qubitIFs, drive_len_ns, max_delay_ns)
+        if sigma_ns is None:
+            sigma_ns = drive_len_ns / 4
+        if readout_delay_ns is None:
+            readout_delay_ns = int(np.ceil(drive_len_ns / 2 / 4)*4)
+        self.params = {
+            'Navg': Navg, 'Nrep': Nrep, 'Niter': Navg*Nrep,
+            'qubitIFs': qubitIFs,
+            'drive_len_ns': drive_len_ns,
+            'sigma_ns': sigma_ns,
+            'max_delay_ns': max_delay_ns,
+            'readout_delay_ns': readout_delay_ns}
+
+    def _make_program(self):
+        read_amp_scale = self.config['short_readout_amp'] / \
+            self.config['qmconfig']['waveforms']['short_readout_wf']['sample']
+        qubitIFs = self.params['qubitIFs']
+
+        readoutdelay = self.params['readout_delay_ns']
+        assert readoutdelay % 4 == 0
+
+        maxdelay = self.params['max_delay_ns']
+        assert maxdelay % 4 == 0
+        self.params['delay_ns'] = np.arange(0, maxdelay, 1)
+
+        pulseamp = self.config['pi_amp'] / 2
+        sigma = self.params['sigma_ns']
+        drivelen = tg = self.params['drive_len_ns']
+        assert drivelen % 8 == 0
+
+        t = np.arange(0, drivelen, 1)
+        pulse = pulseamp * (np.exp(-(t-(tg-1)/2)**2 / (2*sigma**2)) - np.exp(-(tg-1)**2/(8*sigma**2))) / (1-np.exp(-(tg-1)**2/(8*sigma**2)))
+
+        ## Waveforms for long wait case:
+        # length of first drive wf, right aligned,
+        # including variable wait (1 to 4ns),
+        # min wf length is 16 samples and multiple of 4ns
+        driveAlen = max(16, drivelen+4)
+        # length of second drive wf, right aligned
+        driveBlen = max(16, drivelen)
+        # wait included in driveA after Gaussian center
+        waitA = drivelen//2
+        # wait included in driveB before Gaussian center
+        waitB = driveBlen - drivelen//2
+        assert (waitA+waitB) % 4 == 0 # for maxwaitcycles later
+        # Number of cycles to wait before readout,
+        # this is the reason drive_len_ns needs to be multiple of 8
+        longwfminreadoutcycles = (driveAlen+driveBlen-drivelen//2+readoutdelay)//4
+
+        # Remember: baking modifies the qmconfig but every instance uses its own deep-copy.
+        # start pulse driveA, right aligned with 0-3ns wait
+        baked_driveA = []
+        for l in range(0, 4):
+            with baking(self.config['qmconfig'], padding_method='none') as bake:
+                wf = np.zeros(driveAlen)
+                wf[wf.size-drivelen-l : wf.size-l] = pulse
+                bake.add_op('driveA_%d'%l, 'qubit', [wf, [0]*driveAlen])
+                bake.play('driveA_%d'%l, 'qubit')
+            baked_driveA.append(bake)
+        # end pulse driveB, right aligned
+        with baking(self.config['qmconfig'], padding_method='none') as baked_driveB:
+            wf = np.zeros(driveBlen)
+            wf[-drivelen:] = pulse
+            baked_driveB.add_op('driveB', 'qubit', [wf, [0]*driveBlen])
+            baked_driveB.play('driveB', 'qubit')
+
+        # Limit between cases: if wait >= waitA+waitB+16 we use two waveforms with >=16ns qua.wait inbetween.
+
+        ## Waveform in case of short wait case:
+        # two pi/2 pulses and up to waitA+waitB+16ns in between
+        shortwflen = max(16, 2*drivelen+waitA+waitB+16)
+        # Second pulse center at
+        shortwfend = shortwflen - drivelen//2
+        # max cycles to wait in qua.wait
+        maxwaitcycles = (maxdelay-waitB-waitA) // 4
+
+        ## Waveforms for short wait case, all pulses baked into one wf.
+        baked_driveshort = []
+        for l in range(0, waitA+waitB+16):
+            with baking(self.config['qmconfig'], padding_method='none') as bake:
+                wf = np.zeros(shortwflen)
+                wf[shortwflen-drivelen-l:shortwflen-l] += pulse
+                wf[-drivelen:] += pulse
+                bake.add_op('driveshort_%d'%l, 'qubit', [wf, [0]*shortwflen])
+                bake.play('driveshort_%d'%l, 'qubit')
+            baked_driveshort.append(bake)
+
+        print('sigma', sigma)
+        print('drivelen', drivelen)
+        print('driveAlen', driveAlen)
+        print('driveBlen', driveBlen)
+        print('waitA', waitA)
+        print('waitB', waitB)
+        print('longwfminreadoutcycles', longwfminreadoutcycles)
+        print('shortwflen', shortwflen)
+        print('shortwfend', shortwfend)
+        print('maxwaitcycles', maxwaitcycles)
+
+        with qua.program() as prog:
+            m = qua.declare(int)
+            n = qua.declare(int)
+            iterations = qua.declare(int)
+            f = qua.declare(int)
+            t4 = qua.declare(int)
+            I = qua.declare(qua.fixed)
+            Q = qua.declare(qua.fixed)
+            t_st = qua.declare_stream() # for timestamps
+            n_st = qua.declare_stream()
+            I_st, Q_st = qua.declare_stream(), qua.declare_stream()
+            Ig_st, Qg_st = qua.declare_stream(), qua.declare_stream()
+            rand = qua.lib.Random()
+
+            qua.update_frequency('resonator', self.config['resonatorIF'])
+            qua.update_frequency('qubit', self.config['qubitIF'])
+            with qua.for_(m, 0, m < self.params['Nrep'], m + 1):
+                qua.save(m, t_st)
+                with qua.for_(n, 0, n < self.params['Navg'], n + 1):
+                    qua.assign(iterations, m*self.params['Navg']+n)
+                    qua.save(iterations, n_st)
+
+                    with qua.for_(*from_array(f, qubitIFs)):
+                        qua.update_frequency('qubit', f)
+
+                        # Ground state reference, no drive
+                        qua.align()
+                        qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator', None,
+                            qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
+                            qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
+                        qua.save(I, Ig_st)
+                        qua.save(Q, Qg_st)
+                        qua.wait(self.config['cooldown_clk'], 'resonator')
+                        qua.wait(rand.rand_int(50)+4, 'resonator')
+
+                        # short wait case
+                        for j in range(waitA+waitB+16):
+                            qua.align()
+                            qua.wait(12, 'qubit')
+                            baked_driveshort[j].run()
+                            qua.wait(12+shortwfend//4+readoutdelay//4, 'resonator')
+                            qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator', None,
+                                qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
+                                qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
+                            qua.save(I, I_st)
+                            qua.save(Q, Q_st)
+                            qua.wait(self.config['cooldown_clk'], 'resonator')
+                            qua.wait(rand.rand_int(50)+4, 'resonator')
+
+                        with qua.for_(t4, 4, t4 < maxwaitcycles, t4 + 1):
+                            for i in range(4):
+                                qua.align()
+                                # qubit pulses
+                                qua.wait(12, 'qubit')
+                                baked_driveA[i].run()
+                                qua.wait(t4, 'qubit')
+                                baked_driveB.run()
+                                # readout
+                                qua.wait(12+longwfminreadoutcycles, 'resonator')
+                                qua.wait(t4, 'resonator')
+                                qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator', None,
+                                    qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
+                                    qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
+                                qua.save(I, I_st)
+                                qua.save(Q, Q_st)
+                                qua.wait(self.config['cooldown_clk'], 'resonator')
+                                qua.wait(rand.rand_int(50)+4, 'resonator')
+
+            with qua.stream_processing():
+                n_st.save('iteration')
+                t_st.with_timestamps().save_all('t')
+                I_st.buffer(self.params['Navg'], len(qubitIFs), maxdelay).map(qua.FUNCTIONS.average(0)).save_all('I')
+                Q_st.buffer(self.params['Navg'], len(qubitIFs), maxdelay).map(qua.FUNCTIONS.average(0)).save_all('Q')
+                Ig_st.buffer(self.params['Navg'], len(qubitIFs)).map(qua.FUNCTIONS.average(0)).save_all('Ig')
+                Qg_st.buffer(self.params['Navg'], len(qubitIFs)).map(qua.FUNCTIONS.average(0)).save_all('Qg')
+
+        self.qmprog = prog
+        return prog
 # %%
 
 if __name__ == '__main__':
