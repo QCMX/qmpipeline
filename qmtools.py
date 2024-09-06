@@ -3347,6 +3347,17 @@ class QMRamseyAnharmonicity (QMRamseyChevronRepeat):
         # this is the reason drive_len_ns needs to be multiple of 8
         longwfminreadoutcycles = (driveAlen+driveBlen-drivelen//2+readoutdelay)//4
 
+        # Length of the excitation waveform (to drive qubit in excited state)
+        exclen = tg + driveAlen
+        baked_drive_exc = []
+        for l in range(0, 4):
+            with baking(self.config['qmconfig'], padding_method='none') as bake:
+                wf = np.zeros(exclen)
+                wf[wf.size-2*drivelen-l : wf.size-l-drivelen] = pulse * 2
+                bake.add_op('drive_exc_%d'%l, 'qubit2', [wf, [0]*exclen])
+                bake.play('drive_exc_%d'%l, 'qubit2')
+            baked_drive_exc.append(bake)
+
         # Remember: baking modifies the qmconfig but every instance uses its own deep-copy.
         # start pulse driveA, right aligned with 0-3ns wait
         baked_driveA = []
@@ -3368,11 +3379,13 @@ class QMRamseyAnharmonicity (QMRamseyChevronRepeat):
 
         ## Waveform in case of short wait case:
         # two pi/2 pulses and up to waitA+waitB+16ns in between
-        shortwflen = max(16, 2*drivelen+waitA+waitB+16)
+        shortwflen = 2*drivelen+waitA+waitB+16
         # Second pulse center at
         shortwfend = shortwflen - drivelen//2
         # max cycles to wait in qua.wait
         maxwaitcycles = (maxdelay-waitB-waitA) // 4
+        # wait time before short wf
+        shortwf_twait_cycles = 12-min(0, shortwflen - exclen - (waitA+waitB+16))//4
 
         ## Waveforms for short wait case, all pulses baked into one wf.
         baked_driveshort = []
@@ -3395,6 +3408,7 @@ class QMRamseyAnharmonicity (QMRamseyChevronRepeat):
         print('shortwflen', shortwflen)
         print('shortwfend', shortwfend)
         print('maxwaitcycles', maxwaitcycles)
+        print('shortwf_twait_cycles', shortwf_twait_cycles)
 
         with qua.program() as prog:
             m = qua.declare(int)
@@ -3411,7 +3425,7 @@ class QMRamseyAnharmonicity (QMRamseyChevronRepeat):
             rand = qua.lib.Random()
 
             qua.update_frequency('resonator', self.config['resonatorIF'])
-            qua.update_frequency('qubit', self.config['qubitIF'])
+            qua.update_frequency('qubit2', self.config['qubitIF'])
             with qua.for_(m, 0, m < self.params['Nrep'], m + 1):
                 qua.save(m, t_st)
                 with qua.for_(n, 0, n < self.params['Navg'], n + 1):
@@ -3434,9 +3448,11 @@ class QMRamseyAnharmonicity (QMRamseyChevronRepeat):
                         # short wait case
                         for j in range(waitA+waitB+16):
                             qua.align()
-                            qua.wait(12, 'qubit')
+                            qua.wait(shortwf_twait_cycles+(shortwflen-exclen-j)//4, 'qubit2')
+                            baked_drive_exc[j%4].run()
+                            qua.wait(shortwf_twait_cycles, 'qubit')
                             baked_driveshort[j].run()
-                            qua.wait(12+shortwfend//4+readoutdelay//4, 'resonator')
+                            qua.wait(shortwf_twait_cycles+shortwfend//4+readoutdelay//4, 'resonator')
                             qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator', None,
                                 qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
                                 qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
@@ -3445,16 +3461,19 @@ class QMRamseyAnharmonicity (QMRamseyChevronRepeat):
                             qua.wait(self.config['cooldown_clk'], 'resonator')
                             qua.wait(rand.rand_int(50)+4, 'resonator')
 
+                        # long wait case
                         with qua.for_(t4, 4, t4 < maxwaitcycles, t4 + 1):
                             for i in range(4):
                                 qua.align()
                                 # qubit pulses
-                                qua.wait(12, 'qubit')
+                                qua.wait(12,'qubit2')
+                                baked_drive_exc[i].run()
+                                qua.wait(12+tg//4, 'qubit')
                                 baked_driveA[i].run()
                                 qua.wait(t4, 'qubit')
                                 baked_driveB.run()
                                 # readout
-                                qua.wait(12+longwfminreadoutcycles, 'resonator')
+                                qua.wait(12+tg//4+longwfminreadoutcycles, 'resonator')
                                 qua.wait(t4, 'resonator')
                                 qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator', None,
                                     qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
@@ -3522,9 +3541,9 @@ if __name__ == '__main__':
     # p = QMPowerRabi_Gaussian(qmm, config, Navg=1e6, duration_ns=16, sigma_ns=4, drive_amps=np.linspace(0, 0.1, 5))
     # p.simulate(20000, plot=True)
 
-    config.qubitIF = 0
-    p = QMRelaxation(qmm, config, Navg=100, drive_len_ns=8, max_delay_ns=52)
-    p.check_timing(20000, plot=True)
+    # config.qubitIF = 0
+    # p = QMRelaxation(qmm, config, Navg=100, drive_len_ns=8, max_delay_ns=52)
+    # p.check_timing(20000, plot=True)
 
     # p = QMRamsey(qmm, config, Navg=100, drive_len_ns=8, max_delay_ns=52)
     # p.simulate(300000, plot=True)
@@ -3542,6 +3561,11 @@ if __name__ == '__main__':
     # #p.simulate(30000, plot=True)
     # dstart, dstop, rstart = p.check_timing()
     # # results = p.run(plot=True)
+
+    config.qubitIF = 0
+    p = QMRamseyAnharmonicity(qmm, config, qubitIFs=np.linspace(0, 10e6, 11), Nrep=10, Navg=1000,
+        drive_len_ns=32, sigma_ns=4, max_delay_ns=100, readout_delay_ns=4)
+    p.simulate(30000, plot=True)
 
 #%%
 
