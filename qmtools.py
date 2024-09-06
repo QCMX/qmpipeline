@@ -148,6 +148,7 @@ class QMProgram (object):
         self.params = {}
 
     def get_meta(self):
+        """TODO not useful because not including parameters, used anywhere? if not, remove"""
         return self.config
 
     def _make_program(self):
@@ -2941,6 +2942,7 @@ class QMRamseyChevronRepeat (QMProgram):
         argS = np.unwrap(np.unwrap(np.angle(np.mean(res['Z'], axis=0)), axis=0))
         self.img.set_array(argS.T)
         self.img.autoscale()
+        self.ax.autoscale(), self.ax.autoscale_view()
         ax.set_title(self._figtitle((res['iteration'] or 0)+1), fontsize=8)
 
         meanS = np.full(self.params['Nrep'], np.nan)
