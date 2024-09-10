@@ -89,7 +89,6 @@ qmconfig = {
             'analog_outputs': {
                 3: {'offset': 0.0},  # I resonator
                 4: {'offset': 0.0},  # Q resonator
-                5: {'offset': 0.0},  # Q resonator
                 7: {'offset': -0.03259},  # I resonator
                 8: {'offset': -0.04925},  # Q resonator
             },
