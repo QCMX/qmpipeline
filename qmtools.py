@@ -202,16 +202,23 @@ class QMProgram (object):
         """
         raise NotImplementedError
 
-    def compile(self):
-        if hasattr(self, 'progid'):
-            return self.progid
-        if not hasattr(self, 'qmprog'):
-            self._make_program()
-        qm = self.qmm.open(self.config['qmconfig'])
-        self.progid = qm.compile(self.qmprog)
-        return self.progid
-
     def simulate(self, duration_cycles, plot=True):
+        """Run simulation of program.
+
+        Parameters
+        ----------
+        duration_cycles : int
+            Duration of simulation in cycles (4ns).
+        plot : bool, optional
+            If True, create new figure with default plot of simulation.
+            The default is True.
+
+        Returns
+        -------
+        job : qua.Job
+            Simulation job with result data.
+            Analog data is in :code:`job.get_simulated_samples().con1.analog`
+        """
         if not hasattr(self, 'qmprog'):
             self._make_program()
         simulate_config = SimulationConfig(duration=duration_cycles)
@@ -260,13 +267,13 @@ class QMProgram (object):
         tstart = self.last_tstart = time.time()
 
         if isinstance(plot, bool) and plot == True:
-            fig, ax = plt.subplots(layout='constrained')
+            fig, self.ax = plt.subplots(layout='constrained')
         elif isinstance(plot, mpl.axes.Axes):
-            ax = plot
+            self.ax = plot
         else:
-            ax = None
-        if ax:
-            self._initialize_liveplot(ax)
+            self.ax = None
+        if self.ax:
+            self._initialize_liveplot(self.ax)
             if isinstance(plot, bool):
                 fig.show()
 
@@ -278,8 +285,8 @@ class QMProgram (object):
                     iteration = resulthandles.iteration.fetch_all() or 1
                     print(
                         f"iteration={iteration}, remaining: {(Niter-iteration) * (time.time()-tstart)/iteration:.0f}s")
-                if ax:
-                    self._update_liveplot(ax, resulthandles)
+                if self.ax:
+                    self._update_liveplot(self.ax, resulthandles)
                 mpl_pause(pause)
         except Exception as e:
             print("Halting QuantumMachine job due to Exception")
@@ -292,16 +299,15 @@ class QMProgram (object):
         trun = self.last_trun = time.time() - tstart
         resulthandles.wait_for_all_values()
         print(f"Execution time: {trun:.1f}s, exit status: {job.status}")
-        # if job.status != 'completed':
-        print("Job execution report:", job.execution_report())
+        print(job.execution_report())
 
-        if ax:
-            self._update_liveplot(ax, resulthandles)
+        if self.ax:
+            self._update_liveplot(self.ax, resulthandles)
         result = self._retrieve_results(resulthandles)
         return result
 
     def _init_octave(self, qm):
-        """Initializes octave LO and gain given settings in self.config."""
+        """Initializes octave LO and gain using settings in self.config."""
         element = 'resonator'
         lofreq = self.config['resonatorLO']
         qm.octave.set_lo_source(element, octave.OctaveLOSource.Internal)
@@ -372,18 +378,35 @@ class QMProgram (object):
         return self.params | {'config': self.config}
 
     def _initialize_liveplot(self, ax):
+        """Initialize axis labels and artists.
+
+        To be overwritten by subclasses.
+
+        Should set :code:`self.ax = ax`
+        """
+        self.ax = ax
+
+    def _update_liveplot(self, ax):
+        """Update plot with data from last or running job.
+
+        To be overwritten by subclasses.
+
+        Call only after _initialize_liveplot(), otherwise some artist
+        might not have been created yet.
+        """
         pass
 
-    def _update_liveplot(self, ax, resulthandles):
-        pass
-    
     def clear_liveplot(self):
+        """Clear liveplotting axis (if present).
+
+        Also removes self.colorbar if present.
+        """
         if hasattr(self, 'colorbar'):
             try:
                 self.colorbar.remove()
             except:
                 pass
-        if hasattr(self, 'ax'):
+        if hasattr(self, 'ax') and self.ax is not None:
             self.ax.clear()
 
 
@@ -421,9 +444,6 @@ class QMMixerCalibration (QMProgram):
     def _make_program(self):
         """No QM program, because calibration is run using QM API."""
         pass
-
-    def compile(self):
-        raise NotImplementedError
 
     def run(self):
         """Runs calibration for resonator and qubit.
@@ -479,6 +499,8 @@ class QMMixerCalibration (QMProgram):
 
 
 class QMTimeOfFlight (QMProgram):
+    """Measures raw ADC signal at resonatorIF in configuration."""
+
     def __init__(self, qmm, config, Navg):
         super().__init__(qmm, config)
         self.Navg = Navg
@@ -514,6 +536,21 @@ class QMTimeOfFlight (QMProgram):
         return prog
 
     def apply_offset_to(self, config, printinfo=True):
+        """Use measured avg ADC signal to adjust DC offset on analog input.
+
+        Parameters
+        ----------
+        config : dict
+            Configuration to apply DC offset to. Applies offset inside
+            config['qmconfig'] only, not on higher level.
+        printinfo : bool, optional
+            Print noise and offset info to stdout.
+            The default is True.
+
+        Returns
+        -------
+        None.
+        """
         tof = self._retrieve_results()
         nsamples = tof['adc1'].size
         offserr = np.mean(tof['adc1']), np.mean(tof['adc2'])
@@ -534,11 +571,22 @@ class QMTimeOfFlight (QMProgram):
 class QMResonatorSpec (QMProgram):
     """Continuous-wave one-tone spectroscopy of readout resonator.
 
-    Scales IQ to volts and corrects electrict delay.
+    Demodulation result is scaled to volts with electrict delay corrected.
 
     Has utility function to fit Lorentzian to extract resonance frequency.
     """
+
     def __init__(self, qmm, config, Navg, resonatorIFs):
+        """
+        Parameters
+        ----------
+        qmm : qua.QuantumMachineManager
+        config : dict
+        Navg : int
+            Number of averages
+        resonatorIFs : array of floats
+            Intermediate frequencies to run spectroscopy at.
+        """
         super().__init__(qmm, config)
         self.params = {'resonatorIFs': resonatorIFs, 'Navg': Navg}
 
@@ -581,7 +629,7 @@ class QMResonatorSpec (QMProgram):
         return prog
 
     def _retrieve_results(self, resulthandles=None):
-        """Applies phase correction to Z."""
+        """Applies amplitude and phase correction to I, Q, and Z."""
         res = super()._retrieve_results(resulthandles)
         nsamples = self.config['qmconfig']['pulses']['readout_pulse']['length']
         # Note: don't use (a *= 3) because it modifies the result in the iterator.
@@ -599,15 +647,15 @@ class QMResonatorSpec (QMProgram):
         line, = ax.plot(freqs/1e6, np.full(len(freqs), np.nan), label="|S|")
         readoutpower = opx_amp2pow(self.config['readout_amp'])
         ax.set_title(
-            "resonator spectroscopy analysis\n"
-            f"LO {(self.config['resonatorLO'])/1e9:f}GHz"
+            "resonator spectroscopy\n"
+            f"LO {(self.config['resonatorLO'])/1e9:.4f}GHz"
             f"   Navg {self.params['Navg']}\n"
             f"{self.config['readout_len']/1e3:.0f}us readout at {readoutpower:.1f}dBm{self.config['resonator_output_gain']:+.1f}dB",
             fontsize=8)
         ax.set_xlabel('IF  [MHz]')
         ax.set_ylabel('|S|  [Volt]')
         self.line = line
-        self.ax = ax # for self.clear_liveplot
+        self.ax = ax
 
     def _update_liveplot(self, ax, resulthandles):
         res = self._retrieve_results(resulthandles)
@@ -618,7 +666,27 @@ class QMResonatorSpec (QMProgram):
 
     @staticmethod
     def lorentzian_amplitude(f, f0, width, a, tau0):
-        """Complex 'squareroot' of the Lorentzian."""
+        """Complex 'squareroot' of the Lorentzian. Fits amplitude of
+        resonator in transmission.
+
+        Parameters
+        ----------
+        f : float or array
+            Frequency.
+        f0 : float
+            Resonance frequency.
+        width : float
+            Lorentzian width.
+        a : float
+            Amplitude.
+        tau0 : float
+            Phase on resonance.
+
+        Returns
+        -------
+        float or array
+            Same shape as f.
+        """
         tau = 0
         L = (width/2) / ((width/2) + 1j*(f - f0))
         return (a * np.exp(1j*(tau0 + tau*(f-f0))) * L).view(float)
@@ -628,10 +696,29 @@ class QMResonatorSpec (QMProgram):
             pltkw={'color': 'k', 'linewidth': 1}, printinfo=True):
         """Fit 'square root' lorentzian shape to data.
 
-        results is the return value of run() or None to use the results of the last run().
+        Parameters
+        ----------
+        result : dict, optional
+            Data to analyse. As returned by get_result() or run().
+            If None runs on results of last job. The default is None.
+        ax : matplotlib.Axis, optional
+            If present will plot fitted model into this axis.
+            The default is None.
+        plotp0 : bool, optional
+            If True plots the model with initial parameters into ax.
+            The default is False.
+        pltkw : dict, optional
+            Keywords to matplotlib.Axis.plot().
+            The default is {'color': 'k', 'linewidth': 1}.
+        printinfo : bool, optional
+            If True prints fit results to stdout. The default is True.
 
-        Returns tuple of (optimal, uncertainty), each being an array of
-        f0, width, amplitude and angle offset.
+        Returns
+        -------
+        popt : 4-array
+            Optimal values f0, width, amplitude and angle offset.
+        perr : 4-array
+            Uncertainties.
         """
         res = self._retrieve_results() if result is None else result
         freqs = res['resonatorIFs']
@@ -644,7 +731,6 @@ class QMResonatorSpec (QMProgram):
             np.max(np.abs(Z)),  # amplitude
             np.angle(Z[np.argmax(np.abs(Z))])  # angle
         ]
-        print(p0)
         popt, pcov = curve_fit(
             func, freqs, Z.view(float), p0=p0,
             bounds=(
@@ -664,7 +750,26 @@ class QMResonatorSpec (QMProgram):
 
 
 class QMResonatorSpec_P2 (QMProgram):
+    """CW one-tone spectroscopy of resonator varying readout power.
+
+    Demodulation result is scaled to volts with electrict delay corrected.
+    """
+
     def __init__(self, qmm, config, Navg, resonatorIFs, readout_amps):
+        """
+        Parameters
+        ----------
+        qmm : qua.QuantumMachineManager
+        config : dict
+        Navg : int
+            Number of averages
+        resonatorIFs : array of floats
+            Readout intermediate frequencies in Hz.
+        readout_amps : array of floats
+            Readout amplitudes in volts.
+            Maximum 8 times the readout amplitude in the qmconfig, due to
+            limitations of fixed point numbers on quantum machine.
+        """
         super().__init__(qmm, config)
         self.params = {
             'resonatorIFs': resonatorIFs,
@@ -714,7 +819,7 @@ class QMResonatorSpec_P2 (QMProgram):
         return prog
 
     def _retrieve_results(self, resulthandles=None):
-        """Applies phase correction to Z."""
+        """Applies amplitude and phase correction to Z."""
         res = super()._retrieve_results(resulthandles)
         nsamples = self.config['qmconfig']['pulses']['readout_pulse']['length']
         # Note: don't use (a *= 3) because it modifies the result in the iterator.
@@ -763,10 +868,6 @@ class QMResonatorSpec_P2 (QMProgram):
         # Note: setting an empty Normalize resets the colorscale
         self.img.set(array=np.abs(res['Z'])/amps[None,:], norm=mpl.colors.Normalize())
 
-    def clear_liveplot(self):
-        if hasattr(self, 'ax'):
-            self.ax.clear()
-
 
 class QMNoiseSpectrum (QMProgram):
     """Readout many times to later do FFT of it.
@@ -789,8 +890,26 @@ class QMNoiseSpectrum (QMProgram):
     """
 
     def __init__(self, qmm, config, Nsamples, wait_ns=16, fcut_Hz=None):
+        """
+        Parameters
+        ----------
+        qmm : qua.QuantumMachineManager
+        config : dict
+        Nsamples : int
+            Number of samples to collect
+        wait_ns : int, optional
+            Nanoseconds to wait between shots in addition to internal delays.
+            Rounded down to multiple of 4. Must be at least 16.
+            The default is 16.
+        fcut_Hz : float or None, optional
+            Cut-off frequency applied after FFT to reduce amount of data.
+            Keeps full FFT if fcut_Hz is None. The default is None.
+        """
         super().__init__(qmm, config)
-        self.params = {'Nsamples': Nsamples, 'wait_ns': wait_ns, 'fcut_Hz': fcut_Hz}
+        self.params = {
+            'Nsamples': Nsamples,
+            'wait_ns': wait_ns,
+            'fcut_Hz': fcut_Hz}
 
     def _make_program(self):
         amp_scale = self.config['readout_amp'] / \
@@ -826,7 +945,9 @@ class QMNoiseSpectrum (QMProgram):
         return prog
 
     def _retrieve_results(self, resulthandles=None):
-        """Normalizes readout and calculates FFT with correct freq axis"""
+        """Normalizes readout and calculates FFT with correct freq axis.
+        Then cuts to fcut_Hz to reduce amount of data.
+        """
         res = super()._retrieve_results(resulthandles)
         # Normalize
         nsamples = self.config['qmconfig']['pulses']['readout_pulse']['length']
@@ -2205,7 +2326,10 @@ class QMPowerRabi (QMProgram):
 
 class QMPowerRabi_Gaussian (QMPowerRabi):
     """Uses short readout pulse settings for readout and saturation pulse amplitude
-    for Gaussian drive pulse amplitude."""
+    for Gaussian drive pulse amplitude.
+
+    See QMRamseyChevronRepeat_Gaussian for details on the Gaussian pulse.
+    """
 
     def __init__(self, qmm, config, Navg, drive_amps, drive_len_ns, sigma_ns, readout_delay_ns=None):
         """
@@ -2775,7 +2899,7 @@ class QMRamsey (QMProgram):
 
 
 class QMRamseyRepeat (QMProgram):
-    """Like QMRamsey but repeated. Saves average every Navg samples.
+    """Like QMRamsey but repeated. Saves average every Navg samples for Nrep repetitions.
 
     Uses short readout pulse. Uses square pulse with half of
     pi_amp pulse amplitude to go to the superposition state.
@@ -2917,7 +3041,7 @@ class QMRamseyRepeat (QMProgram):
         readoutpower = opx_amp2pow(self.config['short_readout_amp'])
         drivepower = opx_amp2pow(self.config['pi_amp']/2)
         return (
-            f"Ramsey repetitions,  Niter {Niter:.2e}, Navg {self.params['Navg']:.1e}, Nrep {self.params['Nrep']:.1e}\n"
+            f"Ramsey repetitions, Niter {Niter:.2e}, Navg {self.params['Navg']:.1e}, Nrep {self.params['Nrep']:.1e}\n"
             f"resonator {self.config['resonatorLO']/1e9:.3f}GHz{self.config['resonatorIF']/1e6:+.3f}MHz\n"
             f"qubit {self.config['qubitLO']/1e9:.3f}GHz{self.config['qubitIF']/1e6:+.0f}MHz\n"
             f"{self.config['short_readout_len']:.0f}ns readout at {readoutpower:.1f}dBm{self.config['resonator_output_gain']:+.1f}dB\n"
