@@ -2317,6 +2317,20 @@ class QMRelaxation (QMProgram):
     """Uses short readout pulse and pi pulse amplitude."""
 
     def __init__(self, qmm, config, Navg, drive_len_ns, max_delay_ns):
+        """
+        Parameters
+        ----------
+        qmm : qua.QuantumMachineManager
+        config : dict
+        Navg : int
+            Number of averages
+        drive_len_ns : int
+            Total length of drive pulse in ns.
+        max_delay_ns : int
+            Maximum delay until readout. Will run protocol at all
+            delays from 0 to max_delay_ns (exclusive).
+            Must be larger than 16.
+        """
         super().__init__(qmm, config)
         self.params = {
             'Navg': Navg,
@@ -2327,7 +2341,6 @@ class QMRelaxation (QMProgram):
         read_amp_scale = self.config['short_readout_amp'] / \
             self.config['qmconfig']['waveforms']['short_readout_wf']['sample']
 
-        # minimum duration: 4cycles = 16ns
         drivelen = self.params['drive_len_ns']
         maxdelay = self.params['max_delay_ns']
         wflen = max(16, int(np.ceil(drivelen/4)*4)+4)
@@ -2401,13 +2414,14 @@ class QMRelaxation (QMProgram):
 
     def _figtitle(self, Navg):
         readoutpower = opx_amp2pow(self.config['short_readout_amp'])
-        drivepower = opx_amp2pow(self.config['pi_amp'])
+        # Use __class__.__name__ to correctly show names of subclasses
+        # that inherited this function
         return (
-            f"Relaxation,  Navg {Navg:.2e}\n"
+            f"{self.__class__.__name__},  Navg {Navg:.2e}\n"
             f"resonator {self.config['resonatorLO']/1e9:.3f}GHz{self.config['resonatorIF']/1e6:+.3f}MHz\n"
             f"qubit {self.config['qubitLO']/1e9:.3f}GHz{self.config['qubitIF']/1e6:+.0f}MHz\n"
             f"{self.config['short_readout_len']:.0f}ns readout at {readoutpower:.1f}dBm{self.config['resonator_output_gain']:+.1f}dB\n"
-            f"{self.params['drive_len_ns']:.0f}ns drive at {drivepower:.1f}dBm{self.config['qubit_output_gain']:+.1f}dB")
+            f"{self.params['drive_len_ns']:.0f}ns drive at {self.config['pi_amp']:.1e}V{self.config['qubit_output_gain']:+.1f}dB")
 
     def _initialize_liveplot(self, ax):
         delays = self.params['delay_ns']
@@ -2428,6 +2442,13 @@ class QMRelaxation (QMProgram):
     def check_timing(self, duration_cycles=25000, plot=True):
         """Simulate program and check alignment of drive and readout alignment.
         Returns the alignment timing in ns.
+
+        Does not have assertions on the timing.
+
+        Returns
+        -------
+        array
+            Distance between non-zero drive and readout samples.
         """
         if not hasattr(self, 'qmprog'):
             self._make_program()
@@ -2456,6 +2477,126 @@ class QMRelaxation (QMProgram):
         print("Waveform delay, first non-zero readout sample - last non-zero drive sample (ns)")
         print(repr(delay))
         return delay
+
+
+class QMRelaxation_Gaussian (QMRelaxation):
+    """Relaxation after Gaussian pi pulse.
+
+    Uses short readout pulse. Makes Gaussian waveform with peak amplitude
+    given by config['pi_amp']. See QMRamseyChevronRepeat_Gaussian for details
+    on Gaussian pulse.
+
+    delay=0 means a readout after end of drive pulse. I.e. Gaussian peak is
+    drive_len_ns/2 before readout.
+
+    Inherits from QMRelaxation, so plotting works the same and the
+    check_timing() function is available, though with a different expected
+    spacing, because the first&last sample of the Gaussian pulse are zero.
+    """
+
+    def __init__(self, qmm, config, Navg, drive_len_ns, sigma_ns, max_delay_ns):
+        """
+        Parameters
+        ----------
+        qmm : qua.QuantumMachineManager
+        config : dict
+        Navg : int
+            Number of averages
+        drive_len_ns : int
+            Total length of drive pulse in ns.
+            Must be multiple of 8.
+        sigma_ns : float
+            Standard deviation of Gaussian pulse in ns.
+        max_delay_ns : int
+            Maximum delay until readout. Will run protocol at all
+            delays from 0 to max_delay_ns (exclusive).
+            Must be larger than 16.
+        """
+        super().__init__(qmm, config, Navg, drive_len_ns, max_delay_ns)
+        self.params = {
+            'Navg': Navg,
+            'drive_len_ns': drive_len_ns,
+            'sigma_ns': sigma_ns,
+            'max_delay_ns': max_delay_ns}
+        self.params['delay_ns'] = np.arange(0, max_delay_ns, 1)
+
+    def _make_program(self):
+        read_amp_scale = self.config['short_readout_amp'] / \
+            self.config['qmconfig']['waveforms']['short_readout_wf']['sample']
+
+        sigma = self.params['sigma_ns']
+        drivelen = tg = self.params['drive_len_ns']
+        assert drivelen % 8 == 0
+        maxdelay = self.params['max_delay_ns']
+        assert maxdelay % 4 == 0
+        assert maxdelay > 16
+
+        t = np.arange(0, drivelen, 1)
+        pulse = self.config['pi_amp'] * (np.exp(-(t-(tg-1)/2)**2 / (2*sigma**2)) - np.exp(-(tg-1)**2/(8*sigma**2))) / (1-np.exp(-(tg-1)**2/(8*sigma**2)))
+        # Bake waveform with 0...3 ns shift
+        wflen = max(16, drivelen+4)
+        baked_pulses = []
+        for l in range(0, 4):
+            with baking(self.config['qmconfig'], padding_method='none') as bake:
+                wf = np.zeros(wflen)
+                wf[wflen-drivelen-l:wflen-l] = pulse
+                bake.add_op('drive_%d'%l, 'qubit', [wf, [0]*wflen])
+                bake.play('drive_%d'%l, 'qubit')
+            baked_pulses.append(bake)
+
+        with qua.program() as prog:
+            n = qua.declare(int)
+            t4 = qua.declare(int)
+            I = qua.declare(qua.fixed)
+            Q = qua.declare(qua.fixed)
+            n_st = qua.declare_stream()
+            I_st = qua.declare_stream()
+            Q_st = qua.declare_stream()
+            rand = qua.lib.Random()
+
+            qua.update_frequency('resonator', self.config['resonatorIF'])
+            qua.update_frequency('qubit', self.config['qubitIF'])
+            with qua.for_(n, 0, n < self.params['Navg'], n + 1):
+                qua.save(n, n_st)
+
+                # First 16ns
+                for j in range(4):
+                    for i in range(4):
+                        qua.align()
+                        qua.wait(12, 'qubit')
+                        baked_pulses[i].run()
+                        qua.wait(12+wflen//4 + j, 'resonator')
+                        qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator', None,
+                            qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
+                            qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
+                        qua.save(I, I_st)
+                        qua.save(Q, Q_st)
+                        qua.wait(self.config['cooldown_clk'], 'resonator')
+                        qua.wait(rand.rand_int(100)+4, 'resonator')
+
+                # Delay >= 16ns
+                with qua.for_(t4, 4, t4 < maxdelay//4, t4 + 1):
+                    for i in range(4):
+                        qua.align()
+                        qua.wait(12, 'qubit')
+                        baked_pulses[i].run()
+                        qua.wait(12+wflen//4, 'resonator')
+                        qua.wait(t4, 'resonator')
+                        qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator', None,
+                            qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
+                            qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
+                        qua.save(I, I_st)
+                        qua.save(Q, Q_st)
+                        qua.wait(self.config['cooldown_clk'], 'resonator')
+                        qua.wait(rand.rand_int(100)+4, 'resonator')
+
+            with qua.stream_processing():
+                n_st.save('iteration')
+                I_st.buffer(maxdelay).average().save('I')
+                Q_st.buffer(maxdelay).average().save('Q')
+
+        self.qmprog = prog
+        return prog
 
 
 class QMRamsey (QMProgram):
@@ -3604,6 +3745,11 @@ if __name__ == '__main__':
     # p = QMRelaxation(qmm, config, Navg=100, drive_len_ns=8, max_delay_ns=52)
     # p.check_timing(20000, plot=True)
 
+    config.qubitIF = 0
+    p = QMRelaxation_Gaussian(
+        qmm, config, Navg=100, drive_len_ns=16, sigma_ns=4, max_delay_ns=52)
+    p.check_timing(20000, plot=True)
+
     # p = QMRamsey(qmm, config, Navg=100, drive_len_ns=8, max_delay_ns=52)
     # p.simulate(300000, plot=True)
 
@@ -3621,10 +3767,10 @@ if __name__ == '__main__':
     # dstart, dstop, rstart = p.check_timing()
     # # results = p.run(plot=True)
 
-    config.qubitIF = 0
-    p = QMRamseyAnharmonicity(qmm, config, qubitIFs=np.linspace(0, 10e6, 11), Nrep=10, Navg=1000,
-        drive_len_ns=32, sigma_ns=4, max_delay_ns=100, readout_delay_ns=4)
-    p.simulate(30000, plot=True)
+    # config.qubitIF = 0
+    # p = QMRamseyAnharmonicity(qmm, config, qubitIFs=np.linspace(0, 10e6, 11), Nrep=10, Navg=1000,
+    #     drive_len_ns=32, sigma_ns=4, max_delay_ns=100, readout_delay_ns=4)
+    # p.simulate(30000, plot=True)
 
 #%%
 
