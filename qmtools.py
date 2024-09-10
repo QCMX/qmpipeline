@@ -1388,6 +1388,7 @@ class QMReadoutSNR_P1 (QMProgram):
             rand = qua.lib.Random()
 
             qua.update_frequency('qubit', self.config['qubitIF'])
+            qua.update_frequency('resonator', self.config['resonatorIF'])
             with qua.for_(n, 0, n < self.params['Navg'], n + 1):
                 with qua.for_(*from_array(a, amps)):
                     # drive OFF
