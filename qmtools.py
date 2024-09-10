@@ -2000,11 +2000,11 @@ class QMTimeRabiChevrons_InnerAvg (QMTimeRabi):
 class QMPowerRabi (QMProgram):
     """Uses short readout pulse and saturation pulse."""
 
-    def __init__(self, qmm, config, Navg, duration_ns, drive_amps, drive_read_overlap_cycles=0):
+    def __init__(self, qmm, config, Navg, drive_len_ns, drive_amps, drive_read_overlap_cycles=0):
         super().__init__(qmm, config)
         self.params = {
             'Navg': Navg,
-            'duration_ns': duration_ns,
+            'drive_len_ns': drive_len_ns,
             'drive_amps': drive_amps,
             'drive_read_overlap_cycles': drive_read_overlap_cycles}
 
@@ -2017,7 +2017,7 @@ class QMPowerRabi (QMProgram):
         overlap_clk = self.params['drive_read_overlap_cycles']
         assert type(overlap_clk) is int and overlap_clk >= 0
 
-        duration = self.params['duration_ns']
+        duration = self.params['drive_len_ns']
 
         # Waveforms are padded to a multiple of 4 samples and a minimum length of 16 samples
         # (with padding added as zeros at the beginning).
@@ -2182,7 +2182,7 @@ class QMPowerRabi (QMProgram):
             f"resonator {self.config['resonatorLO']/1e9:.3f}GHz{self.config['resonatorIF']/1e6:+.3f}MHz\n"
             f"qubit {self.config['qubitLO']/1e9:.3f}GHz{self.config['qubitIF']/1e6:+.0f}MHz\n"
             f"{self.config['short_readout_len']:.0f}ns readout at {readoutpower:.1f}dBm{self.config['resonator_output_gain']:+.1f}dB\n"
-            f"{self.params['duration_ns']:.0f}ns square drive,  {self.config['qubit_output_gain']:+.1f}dB output gain\n"
+            f"{self.params['drive_len_ns']:.0f}ns square drive,  {self.config['qubit_output_gain']:+.1f}dB output gain\n"
             f"{self.params['drive_read_overlap_cycles']//4}ns overlap"
         )
 
@@ -2207,53 +2207,46 @@ class QMPowerRabi_Gaussian (QMPowerRabi):
     """Uses short readout pulse settings for readout and saturation pulse amplitude
     for Gaussian drive pulse amplitude."""
 
-    def __init__(self, qmm, config, Navg, duration_ns, drive_amps, sigma_ns=None, readout_delay_ns=None):
+    def __init__(self, qmm, config, Navg, drive_amps, drive_len_ns, sigma_ns, readout_delay_ns=None):
         """
-
         Parameters
         ----------
-        qmm : TYPE
-            DESCRIPTION.
-        config : TYPE
-            DESCRIPTION.
-        Navg : TYPE
-            DESCRIPTION.
-        duration_ns : TYPE
+        qmm : qm.QuantumMachineManager
+        config : dict
+        Navg : int
+            Number of averages.
+        drive_amps : array of floats
+            Drive amplitudes in volts.
+        drive_len_ns : int
             Total duration of drive pulse in ns.
-            Must be multiple of 4.
-        drive_amps : TYPE
-            DESCRIPTION.
-        sigma_ns : TYPE, optional
-            DESCRIPTION. The default is None.
+            Must be multiple of 8.
+        sigma_ns : int or float
+            Standard deviation of Gaussian pulse.
         readout_delay_ns : int, optional
-            Must be multiple of 4. If None defaults to duration_ns/2
+            Must be multiple of 4. If None defaults to drive_len_ns/2
             rouded up to next multiple of 4.
-
-        Returns
-        -------
-        None.
-
         """
-        super().__init__(qmm, config, Navg, duration_ns, drive_amps)
-        if sigma_ns is None:
-            sigma_ns = duration_ns / 4
+        super().__init__(qmm, config, Navg, drive_len_ns, drive_amps)
         if readout_delay_ns is None:
-            readout_delay_ns = int(np.ceil(duration_ns / 2 / 4)*4)
+            readout_delay_ns = int(np.ceil(drive_len_ns / 2 / 4)*4)
         self.params = {
             'Navg': Navg,
-            'duration_ns': duration_ns,
+            'drive_len_ns': drive_len_ns,
             'drive_amps': drive_amps,
             'sigma_ns': sigma_ns,
             'readout_delay_ns': readout_delay_ns}
 
     def _make_program(self):
+        """
+        Demodulated result :code:`result['Z']` has length of drive_len_ns.
+        """
         read_amp_scale = self.config['short_readout_amp'] / \
             self.config['qmconfig']['waveforms']['short_readout_wf']['sample']
         drive_amp_scale = self.params['drive_amps'] / 0.316
         self.params['drive_power'] = opx_amp2pow(self.params['drive_amps'], self.config['qubit_output_gain'])
 
         sigma = self.params['sigma_ns']
-        duration = tg = self.params['duration_ns']
+        duration = tg = self.params['drive_len_ns']
         assert duration % 8 == 0
 
         t = np.arange(0, duration, 1)
@@ -2265,11 +2258,6 @@ class QMPowerRabi_Gaussian (QMPowerRabi):
         wf[-duration:] = pulse
         tleft = wflen - duration//2 # time until center of pulse
         assert tleft % 4 == 0
-        # tleft = duration//2 # time before readout
-        # tright = max(16, int(np.ceil(duration/2 / 4)*4)) # time during readout
-        # wflen = tleft + tright
-        # t = np.arange(wflen) - tleft + sigma + 1
-        # wf = np.exp(-(t/sigma)**2 / 2)
 
         rdelay = self.params['readout_delay_ns']
         assert rdelay % 4 == 0
@@ -2321,7 +2309,7 @@ class QMPowerRabi_Gaussian (QMPowerRabi):
             f"resonator {self.config['resonatorLO']/1e9:.3f}GHz{self.config['resonatorIF']/1e6:+.3f}MHz\n"
             f"qubit {self.config['qubitLO']/1e9:.3f}GHz{self.config['qubitIF']/1e6:+.0f}MHz\n"
             f"{self.config['short_readout_len']:.0f}ns readout at {readoutpower:.1f}dBm{self.config['resonator_output_gain']:+.1f}dB\n"
-            f"{self.params['duration_ns']:.0f}ns Gauss drive,  {self.config['qubit_output_gain']:+.1f}dB output gain\n"
+            f"{self.params['drive_len_ns']:.0f}ns Gauss drive,  {self.config['qubit_output_gain']:+.1f}dB output gain\n"
         )
 
 
@@ -3609,7 +3597,7 @@ if __name__ == '__main__':
     # results = p.run(plot=True)
     
     # config.qubitIF = 0
-    # p = QMPowerRabi_Gaussian(qmm, config, Navg=1e6, duration_ns=16, sigma_ns=4, drive_amps=np.linspace(0, 0.1, 5))
+    # p = QMPowerRabi_Gaussian(qmm, config, Navg=1e6, drive_len_ns=16, sigma_ns=4, drive_amps=np.linspace(0, 0.1, 5))
     # p.simulate(20000, plot=True)
 
     # config.qubitIF = 0
