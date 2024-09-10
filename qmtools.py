@@ -139,7 +139,7 @@ class QMProgram (object):
     calibrated (e.g. pulse amplitudes).
 
     A program has parameters (e.g. number of averages, frequencies to scan)
-    that are given as keywords to the constructor (code:`__init__()`) and
+    that are given as keywords to the constructor (:code:`__init__()`) and
     are stored in the dict :code:`self.params`.
 
     The configuration dict contains the :code:`qmconfig` key which is used
@@ -148,17 +148,41 @@ class QMProgram (object):
     and qubit frequencies are stored in the config outside of :code:`qmconfig`
     and need to be set during run time of the QM program.
 
-    Instance variables:
+    Attributes
+    ----------
+    qmm : qua.QuantumMachineManager
+    config : dict
+    qmprog : qua.program
+        Created by `_make_program()`.
+    last_job : qua job
+        Last or running job.
+    last_tstart : float
+        Timing info, last job start time as UNIX timestamp.
+    last_trun : float
+        Timing info, last job duration (approximate).
+    ax : matplotlib.Axis, optional
+        Axis for liveplotting.
+    colorbar : matplotlib colorbar, optional
+        colorbar for liveplotting, mentioned here for clear_liveplot().
 
-        - self.qmm
-        - self.config
-        - self.program
-        - self.qmprog : `qua.program` created by `_make_program()`
-        - self.last_job : Last or running job.
-        - self.last_tstart : Timing info, last job start time.
-        - self.last_trun : Timing info, last job duration (approximate).
-        - self.ax : Optional, axis for liveplotting
-        - self.colorbar : Optional, colorbar for liveplotting
+    While all keyword arguments to this are saved in self.params, it is
+    preferable to list parameters explicitly to make obvious and document
+    the possible parameters to the program.
+
+    Parameters
+    ----------
+    qmm : qua.QuantumMachineManager
+        The QuantumMachineManager used to open QuantumMachines.
+        Is responsible for loading the calibration database.
+    config : dict or module
+        Setup configuration. Can be a dict or a module (which will be)
+        converted to a dict using code:`qmtools.config_module_to_dict()`.
+        Saves a deepcopy, so that modifications to it are kept local for
+        this instance. (Modifications happen for example when baking extra
+        waveforms.)
+    **params :
+        Parameters supplied as keywords.
+        Will go into :code:`self.params`.
     """
 
     def __init__(self, qmm, config, **params):
@@ -167,24 +191,7 @@ class QMProgram (object):
         Remember to call this using :code:`super().__init__(qmm config)` when
         overwriting.
 
-        While all keyword arguments to this are saved in self.params, it is
-        preferable to list parameters explicitly to make obvious and document
-        the possible parameters to the program.
-
-        Parameters
-        ----------
-        qmm : qua.QuantumMachineManager
-            The QuantumMachineManager used to open QuantumMachines.
-            Is responsible for loading the calibration database.
-        config : dict or module
-            Setup configuration. Can be a dict or a module (which will be)
-            converted to a dict using code:`qmtools.config_module_to_dict()`.
-            Saves a deepcopy, so that modifications to it are kept local for
-            this instance. (Modifications happen for example when baking extra
-            waveforms.)
-        **params :
-            Parameters supplied as keywords.
-            Will go into :code:`self.params`.
+        Note: __init__ doc-strings are ignored by sphinx.
         """
         self.qmm = qmm
         # Convert module to dictionary
@@ -423,18 +430,17 @@ class QMMixerCalibration (QMProgram):
     otherwise an error is produced when opening the quantum machine.
     The QM selects the calibration matching the LO and IF given in the config
     upon opening the quantum machine.
+
+    Parameters
+    ----------
+    qmm : qm.QuantumMachineManager
+    config : dict
+    qubitLOs : list of ints or floats, optional
+        List of qubit LO frequencies (in Hz) to calibration.
+        Will always calibrate the LO frequency in :code:`config['qubitLO']`.
     """
 
     def __init__(self, qmm, config, qubitLOs=None):
-        """
-        Parameters
-        ----------
-        qmm : qm.QuantumMachineManager
-        config : dict
-        qubitLOs : list of ints or floats, optional
-            List of qubit LO frequencies (in Hz) to calibration.
-            Will always calibrate the LO frequency in :code:`config['qubitLO']`.
-        """
         super().__init__(qmm, config)
         if qubitLOs is None:
             qubitLOs = [self.config['qubitLO']]
@@ -574,19 +580,18 @@ class QMResonatorSpec (QMProgram):
     Demodulation result is scaled to volts with electrict delay corrected.
 
     Has utility function to fit Lorentzian to extract resonance frequency.
+
+    Parameters
+    ----------
+    qmm : qua.QuantumMachineManager
+    config : dict
+    Navg : int
+        Number of averages
+    resonatorIFs : array of floats
+        Intermediate frequencies to run spectroscopy at.
     """
 
     def __init__(self, qmm, config, Navg, resonatorIFs):
-        """
-        Parameters
-        ----------
-        qmm : qua.QuantumMachineManager
-        config : dict
-        Navg : int
-            Number of averages
-        resonatorIFs : array of floats
-            Intermediate frequencies to run spectroscopy at.
-        """
         super().__init__(qmm, config)
         self.params = {'resonatorIFs': resonatorIFs, 'Navg': Navg}
 
@@ -753,23 +758,22 @@ class QMResonatorSpec_P2 (QMProgram):
     """CW one-tone spectroscopy of resonator varying readout power.
 
     Demodulation result is scaled to volts with electrict delay corrected.
+
+    Parameters
+    ----------
+    qmm : qua.QuantumMachineManager
+    config : dict
+    Navg : int
+        Number of averages
+    resonatorIFs : array of floats
+        Readout intermediate frequencies in Hz.
+    readout_amps : array of floats
+        Readout amplitudes in volts.
+        Maximum 8 times the readout amplitude in the qmconfig, due to
+        limitations of fixed point numbers on quantum machine.
     """
 
     def __init__(self, qmm, config, Navg, resonatorIFs, readout_amps):
-        """
-        Parameters
-        ----------
-        qmm : qua.QuantumMachineManager
-        config : dict
-        Navg : int
-            Number of averages
-        resonatorIFs : array of floats
-            Readout intermediate frequencies in Hz.
-        readout_amps : array of floats
-            Readout amplitudes in volts.
-            Maximum 8 times the readout amplitude in the qmconfig, due to
-            limitations of fixed point numbers on quantum machine.
-        """
         super().__init__(qmm, config)
         self.params = {
             'resonatorIFs': resonatorIFs,
@@ -887,24 +891,23 @@ class QMNoiseSpectrum (QMProgram):
 
     If fcut_Hz is None the full raw data and FFT is saved, otherwise only the
     FFT inside the cutoff.
+
+    Parameters
+    ----------
+    qmm : qua.QuantumMachineManager
+    config : dict
+    Nsamples : int
+        Number of samples to collect
+    wait_ns : int, optional
+        Nanoseconds to wait between shots in addition to internal delays.
+        Rounded down to multiple of 4. Must be at least 16.
+        The default is 16.
+    fcut_Hz : float or None, optional
+        Cut-off frequency applied after FFT to reduce amount of data.
+        Keeps full FFT if fcut_Hz is None. The default is None.
     """
 
     def __init__(self, qmm, config, Nsamples, wait_ns=16, fcut_Hz=None):
-        """
-        Parameters
-        ----------
-        qmm : qua.QuantumMachineManager
-        config : dict
-        Nsamples : int
-            Number of samples to collect
-        wait_ns : int, optional
-            Nanoseconds to wait between shots in addition to internal delays.
-            Rounded down to multiple of 4. Must be at least 16.
-            The default is 16.
-        fcut_Hz : float or None, optional
-            Cut-off frequency applied after FFT to reduce amount of data.
-            Keeps full FFT if fcut_Hz is None. The default is None.
-        """
         super().__init__(qmm, config)
         self.params = {
             'Nsamples': Nsamples,
@@ -1129,6 +1132,7 @@ class QMQubitSpecThreeTone (QMProgram):
     Uses 'saturation' pulse (amplitude and qubitIF may be modified outside config.qmconfig),
     and 'readout' pulse (amplitude and resonatorIF may be modified outside config.qmconfig).
     """
+
     def __init__(self, qmm, config, Navg, third_amp, thirdIFs):
         super().__init__(qmm, config)
         self.params = {'thirdIFs': thirdIFs, 'third_amp': third_amp, 'Navg': Navg}
@@ -1214,11 +1218,12 @@ class QMQubitSpecThreeTone (QMProgram):
 
 
 class QMQubitSpec_P2 (QMProgram):
+    """
+    qubitIFs in Hz
+    driveamps in Volts (saturation_amp is ignored)
+    """
+
     def __init__(self, qmm, config, Navg, qubitIFs, drive_amps):
-        """
-        qubitIFs in Hz
-        driveamps in Volts (saturation_amp is ignored)
-        """
         super().__init__(qmm, config)
         self.params = {
             'Navg': Navg,
@@ -2329,27 +2334,26 @@ class QMPowerRabi_Gaussian (QMPowerRabi):
     for Gaussian drive pulse amplitude.
 
     See QMRamseyChevronRepeat_Gaussian for details on the Gaussian pulse.
+
+    Parameters
+    ----------
+    qmm : qm.QuantumMachineManager
+    config : dict
+    Navg : int
+        Number of averages.
+    drive_amps : array of floats
+        Drive amplitudes in volts.
+    drive_len_ns : int
+        Total duration of drive pulse in ns.
+        Must be multiple of 8.
+    sigma_ns : int or float
+        Standard deviation of Gaussian pulse.
+    readout_delay_ns : int, optional
+        Must be multiple of 4. If None defaults to drive_len_ns/2
+        rouded up to next multiple of 4.
     """
 
     def __init__(self, qmm, config, Navg, drive_amps, drive_len_ns, sigma_ns, readout_delay_ns=None):
-        """
-        Parameters
-        ----------
-        qmm : qm.QuantumMachineManager
-        config : dict
-        Navg : int
-            Number of averages.
-        drive_amps : array of floats
-            Drive amplitudes in volts.
-        drive_len_ns : int
-            Total duration of drive pulse in ns.
-            Must be multiple of 8.
-        sigma_ns : int or float
-            Standard deviation of Gaussian pulse.
-        readout_delay_ns : int, optional
-            Must be multiple of 4. If None defaults to drive_len_ns/2
-            rouded up to next multiple of 4.
-        """
         super().__init__(qmm, config, Navg, drive_len_ns, drive_amps)
         if readout_delay_ns is None:
             readout_delay_ns = int(np.ceil(drive_len_ns / 2 / 4)*4)
@@ -2438,23 +2442,23 @@ class QMPowerRabi_Gaussian (QMPowerRabi):
 
 
 class QMRelaxation (QMProgram):
-    """Uses short readout pulse and pi pulse amplitude."""
+    """Uses short readout pulse and pi pulse amplitude.
+
+    Parameters
+    ----------
+    qmm : qua.QuantumMachineManager
+    config : dict
+    Navg : int
+        Number of averages
+    drive_len_ns : int
+        Total length of drive pulse in ns.
+    max_delay_ns : int
+        Maximum delay until readout. Will run protocol at all
+        delays from 0 to max_delay_ns (exclusive).
+        Must be larger than 16.
+    """
 
     def __init__(self, qmm, config, Navg, drive_len_ns, max_delay_ns):
-        """
-        Parameters
-        ----------
-        qmm : qua.QuantumMachineManager
-        config : dict
-        Navg : int
-            Number of averages
-        drive_len_ns : int
-            Total length of drive pulse in ns.
-        max_delay_ns : int
-            Maximum delay until readout. Will run protocol at all
-            delays from 0 to max_delay_ns (exclusive).
-            Must be larger than 16.
-        """
         super().__init__(qmm, config)
         self.params = {
             'Navg': Navg,
@@ -2616,26 +2620,25 @@ class QMRelaxation_Gaussian (QMRelaxation):
     Inherits from QMRelaxation, so plotting works the same and the
     check_timing() function is available, though with a different expected
     spacing, because the first&last sample of the Gaussian pulse are zero.
+
+    Parameters
+    ----------
+    qmm : qua.QuantumMachineManager
+    config : dict
+    Navg : int
+        Number of averages
+    drive_len_ns : int
+        Total length of drive pulse in ns.
+        Must be multiple of 8.
+    sigma_ns : float
+        Standard deviation of Gaussian pulse in ns.
+    max_delay_ns : int
+        Maximum delay until readout. Will run protocol at all
+        delays from 0 to max_delay_ns (exclusive).
+        Must be larger than 16.
     """
 
     def __init__(self, qmm, config, Navg, drive_len_ns, sigma_ns, max_delay_ns):
-        """
-        Parameters
-        ----------
-        qmm : qua.QuantumMachineManager
-        config : dict
-        Navg : int
-            Number of averages
-        drive_len_ns : int
-            Total length of drive pulse in ns.
-            Must be multiple of 8.
-        sigma_ns : float
-            Standard deviation of Gaussian pulse in ns.
-        max_delay_ns : int
-            Maximum delay until readout. Will run protocol at all
-            delays from 0 to max_delay_ns (exclusive).
-            Must be larger than 16.
-        """
         super().__init__(qmm, config, Navg, drive_len_ns, max_delay_ns)
         self.params = {
             'Navg': Navg,
@@ -3316,36 +3319,35 @@ class QMRamseyChevronRepeat_Gaussian (QMRamseyChevronRepeat):
     sequence with square pulses where the delay is strictly between the pulses.
 
     Demodulation data has shape: (Nrep, qubitIFs, delay_ns).
+
+    Parameters
+    ----------
+    qmm : qm.QuantumMachineManager
+        Used to open new QuantumMachine
+    config : dict
+    Nrep : int
+        Number of repetitions.
+    Navg : int
+        Number of averages per repetition.
+    qubitIFs : numpy.ndarray
+        Drive intermediate frequencies.
+    max_delay_ns : int
+        Maximum pulse delay. Will run protocol for delays from 0ns to
+        max_delay_ns. Must be multiple of 4.
+    drive_len_ns : int
+        Total length of Gaussian pulse in ns.
+        Must be multiple of 8ns.
+    sigma_ns : float, optional
+        Width of Gaussian. If None, defaults to drive_len_ns / 4.
+    readout_delay_ns : int, optional
+        Delay of readout pulse after center of last pulse.
+        Must be multiple of 4ns.
+        If None, defaults to drive_len_ns/2 rounded up to next multiple of 4.
     """
 
     def __init__(
             self, qmm, config, Nrep, Navg, qubitIFs,
             max_delay_ns, drive_len_ns, sigma_ns=None, readout_delay_ns=None):
-        """
-        Parameters
-        ----------
-        qmm : qm.QuantumMachineManager
-            Used to open new QuantumMachine
-        config : dict
-        Nrep : int
-            Number of repetitions.
-        Navg : int
-            Number of averages per repetition.
-        qubitIFs : numpy.ndarray
-            Drive intermediate frequencies.
-        max_delay_ns : int
-            Maximum pulse delay. Will run protocol for delays from 0ns to
-            max_delay_ns. Must be multiple of 4.
-        drive_len_ns : int
-            Total length of Gaussian pulse in ns.
-            Must be multiple of 8ns.
-        sigma_ns : float, optional
-            Width of Gaussian. If None, defaults to drive_len_ns / 4.
-        readout_delay_ns : int, optional
-            Delay of readout pulse after center of last pulse.
-            Must be multiple of 4ns.
-            If None, defaults to drive_len_ns/2 rounded up to next multiple of 4.
-        """
         super().__init__(qmm, config, Nrep, Navg, qubitIFs, drive_len_ns, max_delay_ns)
         if sigma_ns is None:
             sigma_ns = drive_len_ns / 4
@@ -3593,35 +3595,36 @@ class QMRamseyChevronRepeat_Gaussian (QMRamseyChevronRepeat):
 
 
 class QMRamseyAnharmonicity (QMRamseyChevronRepeat):
+    """Ramsey sequence at varying IF after excitation pulse on qubitIF.
+
+    Parameters
+    ----------
+    qmm : qm.QuantumMachineManager
+        Used to open new QuantumMachine
+    config : dict
+    Nrep : int
+        Number of repetitions.
+    Navg : int
+        Number of averages per repetition.
+    qubitIFs : numpy.ndarray
+        Drive intermediate frequencies.
+    max_delay_ns : int
+        Maximum pulse delay. Will run protocol for delays from 0ns to
+        max_delay_ns. Must be multiple of 4.
+    drive_len_ns : int
+        Total length of Gaussian pulse in ns.
+        Must be multiple of 8ns.
+    sigma_ns : float, optional
+        Width of Gaussian. If None, defaults to drive_len_ns / 4.
+    readout_delay_ns : int, optional
+        Delay of readout pulse after center of last pulse.
+        Must be multiple of 4ns.
+        If None, defaults to drive_len_ns/2 rounded up to next multiple of 4.
+    """
 
     def __init__(
             self, qmm, config, Nrep, Navg, qubitIFs,
             max_delay_ns, drive_len_ns, sigma_ns=None, readout_delay_ns=None):
-        """
-        Parameters
-        ----------
-        qmm : qm.QuantumMachineManager
-            Used to open new QuantumMachine
-        config : dict
-        Nrep : int
-            Number of repetitions.
-        Navg : int
-            Number of averages per repetition.
-        qubitIFs : numpy.ndarray
-            Drive intermediate frequencies.
-        max_delay_ns : int
-            Maximum pulse delay. Will run protocol for delays from 0ns to
-            max_delay_ns. Must be multiple of 4.
-        drive_len_ns : int
-            Total length of Gaussian pulse in ns.
-            Must be multiple of 8ns.
-        sigma_ns : float, optional
-            Width of Gaussian. If None, defaults to drive_len_ns / 4.
-        readout_delay_ns : int, optional
-            Delay of readout pulse after center of last pulse.
-            Must be multiple of 4ns.
-            If None, defaults to drive_len_ns/2 rounded up to next multiple of 4.
-        """
         super().__init__(qmm, config, Nrep, Navg, qubitIFs, drive_len_ns, max_delay_ns)
         if sigma_ns is None:
             sigma_ns = drive_len_ns / 4
