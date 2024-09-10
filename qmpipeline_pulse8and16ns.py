@@ -461,7 +461,7 @@ try:
         localconfig['qubit_output_gain'] = 0 # max +4
 
         prog = progs[10] = qmtools.QMPowerRabi_Gaussian(
-            qmm, localconfig, Navg=1e4, duration_ns=32, sigma_ns=8,
+            qmm, localconfig, Navg=1e4, drive_len_ns=32, sigma_ns=8,
             drive_amps=np.linspace(0, AMP0dBm, 160))
         results['power_rabi:gaussian_16ns'][i] = prog.run(plot=axs[1,3])
 
@@ -514,7 +514,7 @@ try:
         localconfig['qubit_output_gain'] = 0 # max +4
 
         prog = progs[10] = qmtools.QMPowerRabi_Gaussian(
-            qmm, localconfig, Navg=1e4, duration_ns=16, sigma_ns=4,
+            qmm, localconfig, Navg=1e4, drive_len_ns=16, sigma_ns=4,
             drive_amps=np.linspace(0, AMP0dBm, 81))
         results['power_rabi:gaussian_8ns'][i] = prog.run(plot=axs[1,3])
 

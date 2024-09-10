@@ -74,7 +74,8 @@ Power Rabi: ...
 
 TODO
 ====
-
+- Use _retrieve_results only to get result handles. Use get_results for plotting.
+  Overwrite get_results in subclasses to adapt data.
 - Result dict fields may be None (QM ResultStreams with no data) or non-existent (not calculated because no data)
   This should be unified: Only save fields where ResultStream is not None.
   Need to fix this in all occurrences: res[key] is None -> key in res
@@ -131,25 +132,68 @@ class ResultUnavailableError (PipelineException):
 
 
 class QMProgram (object):
-    """One program that can be run with some parameters.
+    """One program that can be run on the Qantum Machine with some parameters.
 
-    Programs are initialized with parameters like timing, ranges, etc.
-    And they are treated as immutable after instance creation.
-    I.e. the result of get_meta() will not change.
+    A program has a configuration dict (:code:`self.config`) that contains
+    information describing the setup, including ones that need(ed) to be
+    calibrated (e.g. pulse amplitudes).
+
+    A program has parameters (e.g. number of averages, frequencies to scan)
+    that are given as keywords to the constructor (code:`__init__()`) and
+    are stored in the dict :code:`self.params`.
+
+    The configuration dict contains the :code:`qmconfig` key which is used
+    to open the quantum machine. Note that the Octave calibration is loaded
+    using the LO,IF pair written in :code:`qmconfig`. The calibrated resonator
+    and qubit frequencies are stored in the config outside of :code:`qmconfig`
+    and need to be set during run time of the QM program.
+
+    Instance variables:
+
+        - self.qmm
+        - self.config
+        - self.program
+        - self.qmprog : `qua.program` created by `_make_program()`
+        - self.last_job : Last or running job.
+        - self.last_tstart : Timing info, last job start time.
+        - self.last_trun : Timing info, last job duration (approximate).
+        - self.ax : Optional, axis for liveplotting
+        - self.colorbar : Optional, colorbar for liveplotting
     """
 
-    def __init__(self, qmm, config):
+    def __init__(self, qmm, config, **params):
+        """Instantiate QMProgram.
+
+        Remember to call this using :code:`super().__init__(qmm config)` when
+        overwriting.
+
+        While all keyword arguments to this are saved in self.params, it is
+        preferable to list parameters explicitly to make obvious and document
+        the possible parameters to the program.
+
+        Parameters
+        ----------
+        qmm : qua.QuantumMachineManager
+            The QuantumMachineManager used to open QuantumMachines.
+            Is responsible for loading the calibration database.
+        config : dict or module
+            Setup configuration. Can be a dict or a module (which will be)
+            converted to a dict using code:`qmtools.config_module_to_dict()`.
+            Saves a deepcopy, so that modifications to it are kept local for
+            this instance. (Modifications happen for example when baking extra
+            waveforms.)
+        **params :
+            Parameters supplied as keywords.
+            Will go into :code:`self.params`.
+        """
         self.qmm = qmm
+        # Convert module to dictionary
         if inspect.ismodule(config):
             self.baseconfig = config_module_to_dict(config)
         else:
             self.baseconfig = config
         self.config = deepcopy(self.baseconfig)
-        self.params = {}
-
-    def get_meta(self):
-        """TODO not useful because not including parameters, used anywhere? if not, remove"""
-        return self.config
+        self.params = params
 
     def _make_program(self):
         """Needs to be implemented by subclass.
@@ -257,14 +301,12 @@ class QMProgram (object):
         return result
 
     def _init_octave(self, qm):
-        """Initializes octave LO and gain given settings in self.params
-        (instance specific) or self.config as fallback."""
+        """Initializes octave LO and gain given settings in self.config."""
         element = 'resonator'
-        lofreq = self.params.get('resonatorLO', self.config['resonatorLO'])
+        lofreq = self.config['resonatorLO']
         qm.octave.set_lo_source(element, octave.OctaveLOSource.Internal)
         qm.octave.set_lo_frequency(element, lofreq)
-        qm.octave.set_rf_output_gain(element, self.params.get(
-            'resonator_output_gain', self.config['resonator_output_gain']))
+        qm.octave.set_rf_output_gain(element, self.config['resonator_output_gain'])
         qm.octave.set_rf_output_mode(element, octave.RFOutputMode.on)
         qm.octave.set_qua_element_octave_rf_in_port(element, "octave1", 1)
         qm.octave.set_downconversion(
@@ -273,12 +315,10 @@ class QMProgram (object):
         )
 
         element = 'qubit'
-        lofreq = self.params.get('qubitLO', self.config['qubitLO'])
+        lofreq = self.config['qubitLO']
         qm.octave.set_lo_source(element, octave.OctaveLOSource.Internal)
-        # qm.octave.set_lo_source(element, octave.OctaveLOSource.LO2)
         qm.octave.set_lo_frequency(element, lofreq)
-        qm.octave.set_rf_output_gain(element, self.params.get(
-            'qubit_output_gain', self.config['qubit_output_gain']))
+        qm.octave.set_rf_output_gain(element, self.config['qubit_output_gain'])
         qm.octave.set_rf_output_mode(element, octave.RFOutputMode.on)
 
     def _retrieve_results(self, resulthandles=None):
@@ -323,6 +363,14 @@ class QMProgram (object):
             res['job_runtime'] = self.last_trun
         return self.params | res | {'config': self.config}
 
+    def get_result(self):
+        """Returns result, parameters and config from last (or running) job."""
+        return self._retrieve_results()
+
+    def get_meta(self):
+        """Returns dictionary with parameters, including the config."""
+        return self.params | {'config': self.config}
+
     def _initialize_liveplot(self, ax):
         pass
 
@@ -355,6 +403,15 @@ class QMMixerCalibration (QMProgram):
     """
 
     def __init__(self, qmm, config, qubitLOs=None):
+        """
+        Parameters
+        ----------
+        qmm : qm.QuantumMachineManager
+        config : dict
+        qubitLOs : list of ints or floats, optional
+            List of qubit LO frequencies (in Hz) to calibration.
+            Will always calibrate the LO frequency in :code:`config['qubitLO']`.
+        """
         super().__init__(qmm, config)
         if qubitLOs is None:
             qubitLOs = [self.config['qubitLO']]
@@ -362,12 +419,20 @@ class QMMixerCalibration (QMProgram):
         self.last_run = None
 
     def _make_program(self):
+        """No QM program, because calibration is run using QM API."""
         pass
 
     def compile(self):
         raise NotImplementedError
 
     def run(self):
+        """Runs calibration for resonator and qubit.
+
+        Returns
+        -------
+        dict
+            Calibration results, parameters and config.
+        """
         self.last_run = time.time()
 
         qm = self.qmm.open_qm(self.config['qmconfig'])
@@ -400,7 +465,12 @@ class QMMixerCalibration (QMProgram):
 
     def run_after_interval(self, interval):
         """Rerun calibration if more than 'interval' seconds have passed since
-        the last call to this calibration instance."""
+        the last call to this calibration instance.
+
+        Returns
+        -------
+        The result of run() if calibration was done or None if not necessary.
+        """
         if self.last_run is None or time.time() - self.last_run > interval:
             return self.run()
         else:
@@ -883,7 +953,7 @@ class QMQubitSpec (QMProgram):
             f"{self.config['readout_len']/1e3:.0f}us readout at {readoutpower:.1f}dBm{self.config['resonator_output_gain']:+.1f}dB\n"
             f"{self.config['saturation_len']/1e3:.0f}us drive at {drivepower:.1f}dBm{self.config['qubit_output_gain']:+.1f}dB",
             fontsize=8)
-        ax.set_xlabel(f"drive / GHz")
+        ax.set_xlabel("drive / GHz")
         ax.set_ylabel("arg S")
         self.line = line
         self.ax = ax
