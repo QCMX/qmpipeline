@@ -3891,12 +3891,13 @@ class QMHahn (QMRamseyChevronRepeat):
 
         ## Waveforms for long wait case:
         # length of first drive wf, right aligned,
-        # including variable wait (1 to 4ns),
+        # including variable wait (up to 2*4ns),
         # min wf length is 16 samples and multiple of 4ns
         driveAlen = max(16, drivelen+8)
-        # length of second drive wf, right aligned
+        # length of last drive wf, right aligned
         driveBlen = max(16, drivelen+4)
-        # length of the pi pulse drive
+        # length of the middle pi pulse drive, right aligned
+        # including variable wait (up to 4ns)
         driveClen = max(16, drivelen+4)
         # wait included in driveA after Gaussian center
         waitA = drivelen//2
@@ -3905,11 +3906,10 @@ class QMHahn (QMRamseyChevronRepeat):
         assert (waitA+waitB) % 4 == 0 # for maxwaitcycles later
         # Number of cycles to wait before readout,
         # this is the reason drive_len_ns needs to be multiple of 8
-        #longwfminreadoutcycles = (driveAlen+driveBlen+driveClen)//4
-        longwfminreadoutcycles = (driveAlen+driveBlen+readoutdelay)//4 # when removing middle pulse
+        longwfminreadoutcycles = (driveAlen+driveClen+driveBlen-drivelen//2+readoutdelay)//4
 
         # Remember: baking modifies the qmconfig but every instance uses its own deep-copy.
-        # start pi/2 pulse driveA, right aligned with 0-3ns wait
+        # Initial pi/2 pulse driveA, right aligned with 0,2,4,6ns wait
         baked_driveA = []
         for l in range(0, 4):
             with baking(self.config['qmconfig'], padding_method='none') as bake:
@@ -3918,7 +3918,7 @@ class QMHahn (QMRamseyChevronRepeat):
                 bake.add_op('driveA_%d'%l, 'qubit', [wf, [0]*driveAlen])
                 bake.play('driveA_%d'%l, 'qubit')
             baked_driveA.append(bake)
-        # Hahn pi pulse, right aligned with 0-2ns wait
+        # middle pi pulse, right aligned with 0,1,2,3ns wait
         baked_driveC = []
         for l in range(0, 4):
             with baking(self.config['qmconfig'], padding_method='none') as bake:
@@ -3927,7 +3927,7 @@ class QMHahn (QMRamseyChevronRepeat):
                 bake.add_op('driveC_%d'%l, 'qubit', [wf, [0]*driveClen])
                 bake.play('driveC_%d'%l, 'qubit')
             baked_driveC.append(bake)
-        # # end pi/2 pulse driveB, right aligned
+        # end pi/2 pulse driveB, right aligned
         with baking(self.config['qmconfig'], padding_method='none') as baked_driveB:
             wf = np.zeros(driveBlen)
             wf[-drivelen:] = pulse
@@ -3935,21 +3935,17 @@ class QMHahn (QMRamseyChevronRepeat):
             baked_driveB.play('driveB', 'qubit')
 
         ## Waveform in case of short wait case:
-        # two pi/2 pulses and up to waitA+waitB+16ns in between
-        #shortwflen = 2*drivelen+waitA+waitB+16
         # two pi/2 pulses (A&B), 1 pi pulse (C), 2*16ns due to minimal wait time
         shortwflen = driveAlen + driveBlen + driveClen + 2*16
         # Second pulse center at
         shortwfend = shortwflen - drivelen//2
-        # max cycles to wait in qua.wait
-        maxwaitcycles = (maxdelay-waitB-waitA) // 4 # this works because waitB=waitC. If driveClen != driveBlen, then this is broken.
-        # wait time before short wf
-        shortwf_twait_cycles = 12#-min(0, shortwflen - (waitA+waitB+16*2))//4
+        # max cycles to wait in qua.wait, two times
+        # This works because waitB=waitC. If driveClen != driveBlen, then this is broken.
+        maxwaitcycles = (maxdelay-waitB-waitA) // 4
 
         ## Waveforms for short wait case, all pulses baked into one wf.
         baked_driveshort = []
-        # for l in range(0, waitA+waitB+16):
-        for l in range(0, (shortwflen-drivelen)//2):
+        for l in range(0, waitA+waitB+16):
             with baking(self.config['qmconfig'], padding_method='none') as bake:
                 wf = np.zeros(shortwflen)
                 wf[shortwflen-drivelen-2*l:shortwflen-2*l] += pulse
@@ -3962,14 +3958,13 @@ class QMHahn (QMRamseyChevronRepeat):
         print('sigma', sigma)
         print('drivelen', drivelen)
         print('driveAlen', driveAlen)
-        print('driveBlen', driveBlen)
+        print('driveClen', driveClen, '= driveBlen', driveBlen)
         print('waitA', waitA)
         print('waitB', waitB)
         print('longwfminreadoutcycles', longwfminreadoutcycles)
         print('shortwflen', shortwflen)
         print('shortwfend', shortwfend)
         print('maxwaitcycles', maxwaitcycles)
-        print('shortwf_twait_cycles', shortwf_twait_cycles)
 
         with qua.program() as prog:
             m = qua.declare(int)
@@ -4010,9 +4005,9 @@ class QMHahn (QMRamseyChevronRepeat):
                         # short wait case
                         for j in range(waitA+waitB+16):
                             qua.align()
-                            qua.wait(shortwf_twait_cycles, 'qubit')
+                            qua.wait(12, 'qubit')
                             baked_driveshort[j].run()
-                            qua.wait(shortwf_twait_cycles+shortwfend//4+readoutdelay//4, 'resonator')
+                            qua.wait(12+shortwfend//4+readoutdelay//4, 'resonator')
                             qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator', None,
                                 qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
                                 qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
@@ -4033,8 +4028,9 @@ class QMHahn (QMRamseyChevronRepeat):
                                 qua.wait( t4, 'qubit')
                                 baked_driveB.run()
                                 # readout
+                                qua.wait(t4, 'resonator')
                                 qua.wait(12+longwfminreadoutcycles, 'resonator')
-                                qua.wait(2*t4, 'resonator')
+                                qua.wait(t4, 'resonator')
                                 qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator', None,
                                     qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
                                     qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
@@ -4127,22 +4123,35 @@ class QMHahn (QMRamseyChevronRepeat):
         # start of readout pulses, excluding first one
         readstart = np.nonzero(read)[0][1:][np.diff(np.nonzero(read)[0]) > 1]
         if plot:
-            plt.scatter(drivestart, [0]*drivestart.size)
-            plt.scatter(drivestop, [0]*drivestop.size)
-            plt.scatter(readstart, [0]*readstart.size)
+            plt.scatter(drivestart, [0]*drivestart.size, label="drive: first non-zero sample")
+            plt.scatter(drivestop, [0]*drivestop.size, label="drive: last non-zero sample")
+            plt.scatter(readstart, [0]*readstart.size, label="readout: first non-zero sample")
 
-        # Distance between two drive pulses
+        # Drive pulse lengths
+        # Asserts pulses shorter than 100ns
         l = min(drivestart.size, drivestop.size)
         dlen = drivestop[1:l]-drivestart[:l-1]+1
         print("Drive pulse length (non-zero samples), excluding first pulse")
         print(repr(dlen[dlen<100]))
 
-        # drive pulses closer than 100ns to each other
-        # assert each shot separated by at least 100ns
+        # Drive pulse distances and distance between shots
         ddist = np.diff(drivestart)
         print("Drive pulse distance (first non-zero to first non-zero sample)")
         print(repr(ddist))
-        return ddist
+
+        # Distance from last pulse to readout
+        # Asserts drive sequences separated by at least 200ns and each wait shorter than 200ns.
+        # readstart not including first readout pulse, but first shot also has no drive (ground state measurement).
+        # drive sequence end
+        driveseqstopidx = np.argwhere(np.diff(drivestop) > 200)[:,0]
+        driveseqstop = drivestop[driveseqstopidx]
+        l = min(driveseqstop.size, readstart.size)
+        readdelay = readstart[:l] - driveseqstop[:l]
+        print("Readout delay (first non-zero readout sample - last non-zero drive sample), excluding first sequence (ground state measurement)")
+        print(readdelay)
+        if plot:
+            plt.scatter(driveseqstop, [0]*driveseqstop.size, label="drive sequence: last non-zero sample")
+            plt.legend() # update legend
 
 # %%
 
@@ -4218,7 +4227,7 @@ if __name__ == '__main__':
     # dstart, dstop, rstart = p.check_timing()
     # # results = p.run(plot=True)
 
-    p = QMHahn(qmm, config, qubitIFs=np.linspace(0, -50e6, 11), Nrep=10, Navg=1000, drive_len_ns=16, max_delay_ns=40)
+    p = QMHahn(qmm, config, qubitIFs=np.linspace(0, -50e6, 11), Nrep=10, Navg=1000, drive_len_ns=32, max_delay_ns=40)
     # p.simulate(30000, plot=True)
     p.check_timing(30000, plot=True)
     #results = p.run(plot=True)
