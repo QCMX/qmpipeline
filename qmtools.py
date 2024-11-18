@@ -1690,6 +1690,207 @@ class QMReadoutSNR_P1 (QMProgram):
             raise PipelineException("SNR signal not clear enough to find peak.")
         return self.params['readout_amps'][bestidx], res['readout_power'][bestidx]
 
+class QMHistogramIQ (QMProgram):
+    """Draws I-Q 2D histogram of the ground and excited states.
+    
+    Requires qubit frequency, readout power, and pi pulse to be calibrated.
+    """
+    def __init__(self, qmm, config, Npoints, drive_len_ns, sigma_ns, readout_len_ns, readout_amps):
+        super().__init__(qmm, config)
+        self.params = {
+            'Npoints': Npoints,
+            'drive_len_ns': drive_len_ns,
+            'sigma_ns': sigma_ns,
+            'readout_len_ns': readout_len_ns,
+            'readout_amps': readout_amps,
+            }
+    
+    def _make_program(self):
+        assert np.all(np.abs(self.params['readout_amps']) <= 0.5), "Output amplitudes need to be in range -0.5 to 0.5V."
+        amps = self.params['readout_amps'] / \
+            self.config['qmconfig']['waveforms']['short_readout_wf']['sample']
+        if np.any(amps < -2) or np.any(amps >= 2):
+            raise ValueError(
+                "Readout amplitudes cannot be scaled to target voltage because ratio is out of scaling range [-2 to 2].")
+
+        assert self.params['drive_len_ns'] % 4 == 0
+        
+        self.config['short_readout_len'] = self.params['readout_len_ns']
+        self.config['qmconfig']['pulses']['short_readout_pulse']['length'] = self.params['readout_len_ns']
+        
+        pulseamp = self.config['pi_amp']
+        sigma = self.params['sigma_ns'] 
+        drivelen = tg = self.params['drive_len_ns']
+        assert drivelen % 8 == 0
+        t = np.arange(0, drivelen, 1)
+        pulse = pulseamp * (np.exp(-(t-(tg-1)/2)**2 / (2*sigma**2)) - np.exp(-(tg-1)**2/(8*sigma**2))) / (1-np.exp(-(tg-1)**2/(8*sigma**2)))
+        
+        # pi pulse, to put qubit in excited state
+        with baking(self.config['qmconfig'], padding_method='none') as baked_drive:
+            wf = np.zeros(drivelen)
+            wf[-drivelen:] = pulse
+            baked_drive.add_op('drivePi', 'qubit', [wf, [0]*drivelen])
+            baked_drive.play('drivePi', 'qubit')
+        
+        # qua.update_frequency('resonator', self.config['resonatorIF'])
+        # qua.update_frequency('qubit', self.config['qubitIF'])
+        with qua.program() as prog:
+            n = qua.declare(int)
+            n_st = qua.declare_stream()
+            a = qua.declare(qua.fixed)
+            I = qua.declare(qua.fixed)
+            Q = qua.declare(qua.fixed)
+            Ig_st = qua.declare_stream()
+            Qg_st = qua.declare_stream()
+            Ie_st = qua.declare_stream()
+            Qe_st = qua.declare_stream()
+            
+
+            qua.update_frequency('qubit', self.config['qubitIF'])
+            qua.update_frequency('resonator', self.config['resonatorIF'])
+            with qua.for_(*from_array(a, amps)):
+                with qua.for_(n, 0, n < self.params['Npoints'], n + 1):
+                    # ground state measurement
+                    qua.reset_phase('resonator')
+                    qua.align()
+                    qua.measure('short_readout'*qua.amp(a), 'resonator', None,
+                                qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
+                                qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
+                    qua.save(I, Ig_st)
+                    qua.save(Q, Qg_st)
+                    qua.wait(self.config['cooldown_clk'], 'resonator')
+                    
+                    # excited state measurement
+                    # qua.reset_phase('resonator')
+                    qua.align()
+                    qua.reset_phase('resonator')
+                    baked_drive.run()
+                    # qua.play('saturation'*qua.amp(drive_amp_scale), 'qubit')
+                    qua.align()
+                    qua.measure('short_readout'*qua.amp(a), 'resonator', None,
+                                qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
+                                qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
+                    qua.save(I, Ie_st)
+                    qua.save(Q, Qe_st)
+                    qua.save(n, n_st)
+                    qua.wait(self.config['cooldown_clk'], 'resonator')
+            
+            with qua.stream_processing():
+                n_st.save('iteration')
+                Ig_st.with_timestamps().save_all('Ig') 
+                Qg_st.save_all('Qg')
+                Ie_st.save_all('Ie')
+                Qe_st.save_all('Qe')
+        
+        self.qmprog = prog
+        return prog
+
+    def _figtitle(self, Npoints):
+        readoutpower = opx_amp2pow(self.config['short_readout_amp'])
+        drivepower = opx_amp2pow(self.config['saturation_amp'])
+        return (
+            f"e-state I-Q histogram,   Npoints={Npoints:.2e}\n"
+            f"resonator {self.config['resonatorLO']/1e9:.3f}GHz{self.config['resonatorIF']/1e6:+.3f}MHz\n"
+            f"qubit {self.config['qubitLO']/1e9:.3f}GHz{self.config['qubitIF']/1e6:+.0f}MHz\n"
+            f"{self.config['short_readout_len']:.0f}ns readout at {readoutpower:.1f}dBm{self.config['resonator_output_gain']:+.1f}dB\n"
+            f"drive at {drivepower:.1f}dBm{self.config['qubit_output_gain']:+.1f}dB,"
+        )
+
+    def _initialize_liveplot(self, ax):
+        self.dots, = ax.plot([0], [0], '.', ms=1, alpha=0.1)
+        ax.set_xlabel("I")
+        ax.set_ylabel("Q")
+        ax.set_title(self._figtitle(self.params['Npoints']), fontsize=8)
+        self.ax = ax
+
+    def _update_liveplot(self, ax, resulthandles):
+        res = self._retrieve_results(resulthandles)
+        if res['Ie'] is None:
+            return
+        if res['Qe'] is None:
+            return
+        if len(res['Ie']) != len(res['Qe']): 
+            return # to get rid of error in case of large datasets that take a long time transferring from OPX to QM server
+        self.dots.set_data(res['Ie'], res['Qe'] )
+        ax.relim(), ax.autoscale(), ax.autoscale_view()
+        ax.set_title(self._figtitle((res['iteration'] or 0)+1), fontsize=8)
+
+
+class QMTimeTraceIQ (QMProgram):
+    """Draws I-Q 2D histogram of the ground and excited states.
+    
+    Requires qubit frequency, readout power, and pi pulse to be calibrated.
+    """
+    def __init__(self, qmm, config, Npoints): #, drive_len_ns, sigma_ns, readout_len_ns, readout_amps):
+        super().__init__(qmm, config)
+        self.params = {
+            'Npoints': Npoints,
+            #'drive_len_ns': drive_len_ns,
+            #'sigma_ns': sigma_ns,
+            #'readout_len_ns': readout_len_ns,
+            #'readout_amps': readout_amps,
+            }
+    
+    def _make_program(self):
+        with qua.program() as prog:
+            n = qua.declare(int)
+            n_st = qua.declare_stream()
+            I = qua.declare(qua.fixed)
+            Q = qua.declare(qua.fixed)
+            I_st = qua.declare_stream()
+            Q_st = qua.declare_stream()
+
+            qua.update_frequency('qubit', self.config['qubitIF'])
+            qua.update_frequency('resonator', self.config['resonatorIF'])
+            with qua.for_(n, 0, n < self.params['Npoints'], n + 1):
+                    # ground state measurement
+                    qua.reset_phase('resonator')
+                    qua.align()
+                    qua.measure('readout'*qua.amp(self.config['readout_amp']), 'resonator', None,
+                                qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
+                                qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
+                    qua.save(I, I_st)
+                    qua.save(Q, Q_st)
+            
+            with qua.stream_processing():
+                n_st.save('iteration')
+                I_st.with_timestamps().save_all('I') 
+                Q_st.save_all('Q')
+
+        
+        self.qmprog = prog
+        return prog
+
+    def _figtitle(self, Npoints):
+        readoutpower = opx_amp2pow(self.config['readout_amp'])
+        return (
+            f"e-state I-Q histogram,   Npoints={Npoints:.2e}\n"
+            f"resonator {self.config['resonatorLO']/1e9:.3f}GHz{self.config['resonatorIF']/1e6:+.3f}MHz\n"
+            f"qubit {self.config['qubitLO']/1e9:.3f}GHz{self.config['qubitIF']/1e6:+.0f}MHz\n"
+            f"{self.config['readout_len']:.0f}ns readout at {readoutpower:.1f}dBm{self.config['resonator_output_gain']:+.1f}dB\n"
+
+        )
+
+    def _initialize_liveplot(self, ax):
+        self.line, = ax.plot([], [], ls='-', alpha=1)
+        ax.set_xlabel("t")
+        ax.set_ylabel("|Z|")
+        ax.set_title(self._figtitle(self.params['Npoints']), fontsize=8)
+        self.ax = ax
+
+    def _update_liveplot(self, ax, resulthandles):
+        res = self._retrieve_results(resulthandles)
+        if res['I'] is None:
+            return
+        if res['Q'] is None:
+            return
+        if len(res['I']) != len(res['Q']): 
+            return # to get rid of error in case of large datasets that take a long time transferring from OPX to QM server
+        self.line.set_data(res['I_timestamps'], res['Q'] )
+        ax.relim(), ax.autoscale(), ax.autoscale_view()
+        ax.set_title(self._figtitle((res['iteration'] or 0)+1), fontsize=8)
+        
+       
 
 class QMTimeRabi (QMProgram):
     """Uses short readout pulse and saturation pulse."""
@@ -3824,7 +4025,7 @@ class QMRamseyAnharmonicity (QMRamseyChevronRepeat):
 
 
 class QMHahn (QMRamseyChevronRepeat):
-    """Ramsey sequence at varying IF after excitation pulse on qubitIF.
+    """Hahn sequence at varying IF after excitation pulse on qubitIF.
 
     Parameters
     ----------
@@ -3839,9 +4040,10 @@ class QMHahn (QMRamseyChevronRepeat):
     qubitIFs : numpy.ndarray
         Drive intermediate frequencies.
     max_delay_ns : int
-        Maximum pulse delay. Will run protocol for delays between
-        first pi/2 pulse and pi pulse from 0ns to max_delay_ns.
-        For this protocol, it must be a multiple of 4!
+        Maximum pulse delay between the first pi/2 pulse and the pi pulse. 
+        Will run protocol for delays ranging from 0ns to max_delay_ns. 
+        The delay between the pi pulse and the second pi/2 pulse are equal.
+        Must be a multiple of 4
     drive_len_ns : int
         Total length of Gaussian pulse in ns.
         Must be multiple of 8ns.
@@ -4227,11 +4429,13 @@ if __name__ == '__main__':
     # dstart, dstop, rstart = p.check_timing()
     # # results = p.run(plot=True)
 
-    p = QMHahn(qmm, config, qubitIFs=np.linspace(0, -50e6, 11), Nrep=10, Navg=1000, drive_len_ns=32, max_delay_ns=40)
+    # p = QMHahn(qmm, config, qubitIFs=np.linspace(0, -50e6, 11), Nrep=10, Navg=1000, drive_len_ns=32, max_delay_ns=40)
     # p.simulate(30000, plot=True)
-    p.check_timing(30000, plot=True)
+    # p.check_timing(30000, plot=True)
     #results = p.run(plot=True)
 
+    p = QMHistogramIQ(qmm, config, Npoints=1, drive_len_ns=32, sigma_ns=8, readout_len_ns=1000, readout_amps=np.array([0.1, 0.2]) )
+    p.simulate(15000, plot=True)
     # config.qubitIF = 0
     # p = QMRamseyAnharmonicity(qmm, config, qubitIFs=np.linspace(0, 10e6, 11), Nrep=10, Navg=1000,
     #     drive_len_ns=32, sigma_ns=4, max_delay_ns=100, readout_delay_ns=4)
