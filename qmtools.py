@@ -3261,7 +3261,7 @@ class QMRamseyChevronRepeat (QMProgram):
         res = self._retrieve_results(resulthandles)
         if res['Z'] is None:
             return
-        if 'Zg' in res:
+        if 'Zg' in res and res['Zg'] is not None:
             signal = np.abs(np.mean(res['Z'], axis=0)-np.mean(res['Zg']))
             self.colorbar.set_label('|Z-Zg|')
         else:
