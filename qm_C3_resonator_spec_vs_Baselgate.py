@@ -29,7 +29,7 @@ assert gate.get_state(), "Basel channel not ON"
 print("CH", gate.channel, ":", gate.get_voltage(), "V")
 
 GATERAMP_STEP = 2e-6
-GATERAMP_STEPTIME = 0.02
+GATERAMP_STEPTIME = 0.01
 
 #%%
 
@@ -39,7 +39,9 @@ importlib.reload(qminit)
 filename = '{datetime}_qm_resonator_vs_gate'
 fpath = data_path(filename, datesuffix='_qm')
 
-Vgate = np.concatenate([np.linspace(-3.9, -4.2, int(6e3)+1)])
+#Vgate = np.concatenate([np.linspace(-4.2, -5.2, int(5e3)+1)])
+Vgate = np.linspace(-4.5, -4.0, 5001)
+Vgate = np.linspace(-4, -0, 40001)
 Vstep = np.mean(np.abs(np.diff(Vgate)))
 print(f"Vgate measurement step: {Vstep*1e6:.1f}uV avg")
 Ngate = Vgate.size
@@ -49,10 +51,10 @@ assert Vstep > 1.19e-6, "Vstep smaller than Basel resolution"
 # print(f"Gate hysteresis sweep ({abs(gate.get_voltage()-Vhyst)/GATERAMP_STEP*GATERAMP_STEPTIME/60:.1f}min)")
 # gate.ramp_voltage(Vhyst, 2*GATERAMP_STEP, GATERAMP_STEPTIME)
 
-Navg = 50
+Navg = 30
 f_min = 199e6
-f_max = 212e6
-df = 0.05e6
+f_max = 219e6
+df = 0.1e6
 freqs = np.arange(f_min, f_max + df/2, df)  # + df/2 to add f_max to freqs
 Nf = len(freqs)
 
@@ -125,6 +127,7 @@ tqm = []
 estimator = DurationEstimator(Ngate)
 try:
     for i in range(Ngate):
+        estimator.step(i)
         tstart = time.time()
         gate.ramp_voltage(Vgate[i], GATERAMP_STEP, GATERAMP_STEPTIME)
         tgate.append(time.time()-tstart)
@@ -136,14 +139,12 @@ try:
             mpl_pause(QMSLEEP)
         tqm.append(time.time()-tstart)
 
-        if i%100 == 0 or i == Ngate-1:
+        if i%50 == 0 or i == Ngate-1:
             I = Ihandle.fetch_all()['value']
             Q = Qhandle.fetch_all()['value']
             l = min(I.shape[0], Q.shape[0])
             dataS21[:l] = I[:l] + 1j * Q[:l]
             plt2dimg_update(img, np.abs(dataS21))
-
-        estimator.step(i)
 finally:
     job.halt()
     estimator.end()
@@ -191,10 +192,18 @@ plt.plot(dat['Vgate'], np.angle(dat['dataS21'])[:,fidx])
 #%%
 
 #Shuttle
-Vtarget = -4.042
+Vtarget = -4.23
 
 step = 2e-6
 steptime = 0.01
 print("Ramp time:", np.abs(Vtarget - gate.get_voltage()) / step * steptime / 60, "min")
 gate.ramp_voltage(Vtarget, step, steptime)
 
+#%%
+#Shuttle
+Vtarget = 0
+
+step = 2e-6
+steptime = 0.01
+print("Ramp time:", np.abs(Vtarget - gate.get_voltage()) / step * steptime / 60, "min")
+gate.ramp_voltage(Vtarget, step, steptime)

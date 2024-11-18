@@ -4,7 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from functools import reduce
 
-from .helpers import plt2dimg
+from helpers import plt2dimg
 
 class VgatePipeline:
     """

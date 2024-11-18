@@ -21,12 +21,13 @@ PHASE_CORR = 1.88779e-06
 #  31.6mV = -20dBm
 #  17.8mV = -25dBm
 #  10.0mV = -30dBm
+#   5.6mV = -35dBm
 #   3.16mV = -40dBm
 
 # Octave parameters
 resonator_output_gain = -20 # Octave RF1, range -20 to +20dB
 resonator_input_gain  = +15 # OPX IN, range -12 to +20dB
-qubit_output_gain     = 0 # Octave RF2, range -20 to +20dB
+qubit_output_gain     = -10 # Octave RF2, range -20 to +20dB
 
 # ADC offset in Volts
 #adcoffset = np.array([0.0572889, 0.0706217])
@@ -35,26 +36,26 @@ adcoffset = np.array([0.05715330732421875 , 0.07043738643798828])
 ## Frequencies
 resonatorLO = 5.01e9
 # bareIF = 201.55e6
-resonatorIF = 0.20146e9 # 0.20577e9 # 0.2058e9
+resonatorIF = 201.47e6 # 0.2136e9 #0.20146e9 # 0.20577e9 # 0.2058e9
 # 20ns readout -> 200MHz IF
 # 50ns readout -> 100MHz IF
 
-qubitLO = 4.4e9# 5.36114e9
-qubitIF = -93e6#-380e6
+qubitLO = 4.3e9# 5.36114e9
+qubitIF = -151e6#-380e6
 
 # For resonator width 450kHz width, ie. t=2us lifetime
 # choose at least 6us=3t, ie. 1500cycles
-cooldown_clk = 6000 # 4ns cycles
+cooldown_clk = 2000 # 4ns cycles
 
 ## Readout pulse parameters
 const_len = 20000
 const_amp = 0.1
 
 readout_len = 200000 # ns
-readout_amp = 0.0316
+readout_amp = 0.0056
 
-short_readout_len = 20000 # ns
-short_readout_amp = 0.0316
+short_readout_len = 2000 # ns
+short_readout_amp = 0.063
 short_readout_amp_gain = 0#+20 # dB added to resonator output gain
 
 long_readout_len = 7000
@@ -77,12 +78,18 @@ preload_wf = np.zeros(max(16, preload_len))
 preload_wf[-preload_len:] = preload_amp
 
 # Pi pulse parameters
-pi_len = 100  # in units of ns
+pi_len = 32  # in units of ns
 pi_amp = 0.149  # in units of volts
-pi_wf = (pi_amp * (gaussian(pi_len, pi_len / 5) -
-                   gaussian(pi_len, pi_len / 5)[-1])).tolist()  # waveform
-minus_pi_wf = ((-1) * pi_amp * (gaussian(pi_len, pi_len / 5) -
-                   gaussian(pi_len, pi_len / 5)[-1])).tolist()  # waveform
+# pi_wf = (pi_amp * (gaussian(pi_len, pi_len / 5) -
+#                    gaussian(pi_len, pi_len / 5)[-1])).tolist()  # waveform
+# minus_pi_wf = ((-1) * pi_amp * (gaussian(pi_len, pi_len / 5) -
+#                    gaussian(pi_len, pi_len / 5)[-1])).tolist()  # waveform
+tg = 32
+sigma = 8
+pulseamp = 0.0193
+t = np.arange(tg)
+pi_wf = pulseamp * (np.exp(-(t-(tg-1)/2)**2 / (2*sigma**2)) - np.exp(-(tg-1)**2/(8*sigma**2))) / (1-np.exp(-(tg-1)**2/(8*sigma**2)))
+minus_pi_wf = -pi_wf
 
 
 # Pi_half pulse parameters

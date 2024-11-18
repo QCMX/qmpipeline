@@ -85,7 +85,7 @@ fpath = data_path(filename, datesuffix='_qm')
 ifs = np.arange(-402e6, 402e6, 1e6)
 Navg = 200
 
-Ppump = np.arange(-17, -9.1, 1)
+Ppump = np.arange(-13, -9.1, 1)
 
 Iflux = fluxbias.current()
 pumpmeta = {
@@ -133,12 +133,12 @@ with qua.program() as vna:
                 qua.save(Q, Q_st)
 
     with qua.stream_processing():
-        Iavg = I_st.buffer(Navg, len(ifs)).map(qua.FUNCTIONS.average(0))
-        Qavg = Q_st.buffer(Navg, len(ifs)).map(qua.FUNCTIONS.average(0))
-        Iavg.save_all('I')
-        Qavg.save_all('Q')
-        ((I_st*I_st).buffer(Navg, len(ifs)).map(qua.FUNCTIONS.average(0)) - Iavg*Iavg).save_all("Ivar")
-        ((Q_st*Q_st).buffer(Navg, len(ifs)).map(qua.FUNCTIONS.average(0)) - Qavg*Qavg).save_all("Qvar")
+        I_st.buffer(Navg, len(ifs)).map(qua.FUNCTIONS.average(0)).save_all('I')
+        Q_st.buffer(Navg, len(ifs)).map(qua.FUNCTIONS.average(0)).save_all('Q')
+        # Don't use I_st*I_st, because demodulation results are on typically 1e-5 avg
+        # So I_st*I_st typically 1e-10 which is smaller than fixed point precision
+        I_st.buffer(Navg, len(ifs)).save_all('I_single_shot')
+        Q_st.buffer(Navg, len(ifs)).save_all('Q_single_shot')
 
 # Start program
 QMSLEEP = 0.05
@@ -170,8 +170,16 @@ qm.octave.set_rf_output_mode('vna', octave.RFOutputMode.off)
 job.result_handles.wait_for_all_values()
 I = job.result_handles.get('I').fetch_all()['value']
 Q = job.result_handles.get('Q').fetch_all()['value']
-Ivar = job.result_handles.get('Ivar').fetch_all()['value']
-Qvar = job.result_handles.get('Qvar').fetch_all()['value']
+Ishots = job.result_handles.get('I_single_shot').fetch_all()['value']
+Qshots = job.result_handles.get('Q_single_shot').fetch_all()['value']
+
+assert np.allclose(I, np.mean(Ishots, axis=1), atol=0)
+assert np.allclose(Q, np.mean(Qshots, axis=1), atol=0)
+Ivar = np.var(Ishots, axis=1)
+Qvar = np.var(Qshots, axis=1)
+
+#%%
+
 Zraw = I + 1j*Q
 Z = Zraw * np.exp(1j * ifs[None,:] * config.VNA_PHASE_CORR) / config.readout_len * 2**12
 Zvar = (Ivar + 1j*Qvar) / config.readout_len * 2**12
@@ -187,18 +195,18 @@ np.savez_compressed(
     config=config.meta)
 
 # Plot
-fig, axs = plt.subplots(nrows=4, sharex=True)
+fig, axs = plt.subplots(nrows=4, sharex=True, figsize=(8,8), layout='constrained')
 axs[2].plot(fs/1e9, 20*np.log10(np.abs(Z[0])), color=plt.cm.rainbow(0), label="Pump off")
 for i, P in enumerate(Ppump):
     c = plt.cm.rainbow((i+1)/len(Ppump))
-    axs[0].plot(fs/1e9, 20*np.log10(np.abs(S[i])), color=c)
-    axs[1].plot(fs/1e9, np.unwrap(np.angle(S[i])), color=c, label=f"P={P:+.1f}dBm")
-    axs[2].plot(fs/1e9, 20*np.log10(np.abs(Z[i+1])), color=c)
-    axs[3].plot(fs/1e9, 20*np.log10(snr[i+1]/snr[0]), color=c)
+    axs[0].plot(fs/1e9, 20*np.log10(np.abs(S[i])), color=c, linewidth=1)
+    axs[1].plot(fs/1e9, np.unwrap(np.angle(S[i])), color=c, linewidth=1, label=f"P={P:+.1f}dBm")
+    axs[3].plot(fs/1e9, 20*np.log10(snr[i+1]/snr[0]), color=c, linewidth=1)
+axs[2].plot(fs/1e9, 20*np.log10(np.abs(Z[0])), 'k-')
 axs[0].set_ylabel("|S/Sref| / dB")
-axs[1].set_ylabel("arg S/Sref")
-axs[2].set_ylabel("|Soff| / dB")
-axs[3].set_ylabel("SNR(on/off) / dB")
+axs[1].set_ylabel("arg(S/Sref)")
+axs[2].set_ylabel("|Soff|/dB")
+axs[3].set_ylabel("power SNR(on/off)/dB")
 axs[-1].set_xlabel('f / GHz')
 axs[1].legend(fontsize=6)
 # axs[2].legend(fontsize=8)

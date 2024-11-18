@@ -170,7 +170,6 @@ fig.suptitle(
 fig.tight_layout()
 fig.savefig(fpath+'.png')
 
-
 #%% Resonator Sectoscopy
 
 element = 'qubit'

@@ -66,7 +66,7 @@ importlib.reload(qminit)
 
 filename = '{datetime}_qmpipeline'
 fpath = data_path(filename, datesuffix='_qm')
-Vgate = np.linspace(-4.245, -4.26, 76)
+Vgate = np.linspace(-4.250, -4.255, 16)
 Vstep = np.mean(np.abs(np.diff(Vgate)))
 print(f"Vgate measurement step: {Vstep*1e6:.1f}uV avg")
 Ngate = Vgate.size
@@ -119,9 +119,9 @@ bareIF = barefreq - baseconfig['resonatorLO']
 def fq_estimate(deltafr):
     """Convert resonance shift (Hz, compared to no qubit) to qubit frequency (Hz)"""
     # Inverse of deltafr = g**2 * EC / (delta * (delta - EC)), delta = fq - fr
-    EC = 0.16e9
-    g = 0.3e9
-    fr = 5e9
+    EC = 0.35e9
+    g = 0.23e9
+    fr = 5.2e9
     return -np.sqrt(EC)*np.sqrt(EC*deltafr + 4*g**2)/(2*np.sqrt(deltafr)) + EC/2 + fr
 
 GATE_SETTLETIME = 5 # s
@@ -231,7 +231,7 @@ try:
         localconfig['resonator_output_gain'] = baseconfig['resonator_output_gain']
 
         #######
-        # estimate qubit LO, IF in range +100 to +200MHz
+        # estimate qubit LO, IF in range +0 to +100MHz
         deltafr = localconfig['resonatorIF'] - bareIF
         fqest = max(300e6, fq_estimate(deltafr))
         if np.isnan(fqest):
@@ -241,18 +241,17 @@ try:
         qubitLO = int(max(2e9, np.ceil((fqest-0.10e9)/1e8)*1e8))
         print(f"  Choose qubit LO at {qubitLO/1e9}GHz")
 
-        if fqest < 2.1e9:
-            print("fSkipping low fq < 2.1GHz")
-            continue
-
-
         localconfig['qubitIF'] = fqest - qubitLO
         localconfig['qubitLO'] = qubitLO
         localconfig['qmconfig']['elements']['qubit']['mixInputs']['lo_frequency'] = qubitLO
         localconfig['qmconfig']['elements']['qubit2']['mixInputs']['lo_frequency'] = qubitLO
 
+        if fqest < 1.4e9:
+            print("fSkipping low fq < 1.4GHz")
+            continue
+
         #######
-        # 2tone spectroscopy qubit vs power & update qubit IF
+        # 2tone spectroscopy qubit vs power
         # Note: have room-T amp, max input is +4dBm
 
         localconfig['qubit_output_gain'] = -10
@@ -357,6 +356,12 @@ try:
         localconfig['qubit_output_gain'] = -15 #baseconfig['qubit_output_gain']
         localconfig['resonator_output_gain'] = 0 # baseconfig['resonator_output_gain'] # restore
 
+        localconfig['resonatorIF'] = resonatorfit[0][0]
+        prog = progs[5] = qmtools.QMReadoutSNR_P1(
+            qmm, localconfig, Navg=10e3,
+            readout_amps=np.logspace(-60/20, 0, 37) * AMP0dBm,
+            drive_len=1000)
+        results['readoutSNR_P1:non-demolition'][i] = res = prog.run(plot=axs[1,2])
 
         localconfig['resonatorIF'] = int(bareIF)
         prog = progs[5] = qmtools.QMReadoutSNR_P1(
@@ -364,13 +369,6 @@ try:
             readout_amps=np.logspace(-60/20, 0, 37) * AMP0dBm,
             drive_len=1000)
         results['readoutSNR_P1:destructive'][i] = res = prog.run(plot=axs[1,2])
-
-        localconfig['resonatorIF'] = resonatorfit[0][0]
-        prog = progs[5] = qmtools.QMReadoutSNR_P1(
-            qmm, localconfig, Navg=10e3,
-            readout_amps=np.logspace(-60/20, 0, 37) * AMP0dBm,
-            drive_len=1000)
-        results['readoutSNR_P1:non-demolition'][i] = res = prog.run(plot=axs[1,2])
 
         # Optimize readout power based on best SNR result
         try:
@@ -422,7 +420,7 @@ try:
 
         prog = progs[7] = qmtools.QMTimeRabiChevrons(
             qmm, localconfig, Navg=100,
-            qubitIFs=np.arange(-400e6, 10e6, 2e6),
+            qubitIFs=np.arange(-400e6, 10e6, 4e6),
             max_duration_ns=PROTOCOL_DURATION,
             drive_read_overlap_cycles=0)
         results['time_rabi_chevrons:1'][i] = prog.run(plot=axs[0,5])
@@ -477,9 +475,9 @@ try:
         #######
         # Ramsey Chevrons, Gaussian 16ns
         fc = np.round(localconfig['qubitIF']/10e6)*10e6
-        ifs = np.arange(-100e6, 100e6, 2e6) + fc #np.linspace(-80e6, 80e6, 17) + fc
+        ifs = np.arange(-100e6, 100e6, 4e6) + fc #np.linspace(-80e6, 80e6, 17) + fc
         prog = progs[11] = qmtools.QMRamseyChevronRepeat_Gaussian(
-            qmm, localconfig, qubitIFs=ifs, Nrep=5, Navg=50,
+            qmm, localconfig, qubitIFs=ifs, Nrep=4, Navg=50,
             drive_len_ns=32, sigma_ns=8, readout_delay_ns=16,
             max_delay_ns=PROTOCOL_DURATION)
         results['ramsey_chevron_repeat:gaussian_16ns'][i] = prog.run(plot=axs[1,5])
@@ -534,9 +532,9 @@ try:
         #######
         # Ramsey Chevrons, Gaussian 8ns
         fc = np.round(localconfig['qubitIF']/10e6)*10e6
-        ifs = np.arange(-100e6, 100e6, 2e6) + fc #np.linspace(-80e6, 80e6, 17) + fc
+        ifs = np.arange(-100e6, 100e6, 4e6) + fc #np.linspace(-80e6, 80e6, 17) + fc
         prog = progs[13] = qmtools.QMRamseyChevronRepeat_Gaussian(
-            qmm, localconfig, qubitIFs=ifs, Nrep=5, Navg=50,
+            qmm, localconfig, qubitIFs=ifs, Nrep=4, Navg=50,
             drive_len_ns=16, sigma_ns=4, readout_delay_ns=8,
             max_delay_ns=PROTOCOL_DURATION)
         results['ramsey_chevron_repeat:gaussian_8ns'][i] = prog.run(plot=axs[1,6])
@@ -550,9 +548,9 @@ try:
         results['relaxation:8ns'][i] = prog.run(plot=axs[1,4])
 
         #####
-        ## Change qubit LO to have qubitIF in +100 to +200MHz
+        ## Change qubit LO to have qubitIF in +200 to +300MHz
         fq = localconfig['qubitIF'] + localconfig['qubitLO']
-        qubitLO = int(max(2e9, np.ceil((fq-0.2e9)/1e8)*1e8))
+        qubitLO = int(max(2e9, np.ceil((fq-0.3e9)/1e8)*1e8))
         print(f"  Choose qubit LO at {qubitLO/1e9}GHz")
         localconfig['qubitIF'] = fq- qubitLO
         localconfig['qubitLO'] = qubitLO
@@ -581,12 +579,12 @@ try:
                 print("Qubit update failed, keep estimate:", repr(e))
 
         #######
-        # Ramsey Chevrons, Gaussian 8ns, with pi pulse
+        # Anharmonicity, Gaussian 8ns, with pi pulse
         #fc = np.round(localconfig['qubitIF']/10e6)*10e6
         #ifs = np.arange(-200e6, 200e6, 5e6) + fc #np.linspace(-80e6, 80e6, 17) + fc
-        ifs = np.arange(-200e6, 250e6, 2e6)
+        ifs = np.arange(-200e6, 350e6, 4e6)
         prog = progs[14] = qmtools.QMRamseyAnharmonicity(
-            qmm, localconfig, qubitIFs=ifs, Nrep=1, Navg=250,
+            qmm, localconfig, qubitIFs=ifs, Nrep=5, Navg=200,
             drive_len_ns=16, sigma_ns=4, readout_delay_ns=8,
             max_delay_ns=PROTOCOL_DURATION)
         results['ramsey_anharmonicity:gaussian_8ns'][i] = prog.run(plot=axs[0,6])

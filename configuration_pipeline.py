@@ -53,9 +53,9 @@ const_len = 10000
 const_amp = 0.316
 
 readout_len = 20000 # ns
-readout_amp = 0.0056
+readout_amp = 0.00316 #0.0056
 
-short_readout_len = 1000 # ns
+short_readout_len = 340 # ns
 short_readout_amp = 0.316
 
 # Time it takes the pulses to go through the RF chain, including the device.
