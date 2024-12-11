@@ -74,9 +74,9 @@ class VgatePipeline:
         values = [
             res[variablekey] if res is not None else np.nan
             for res in self.results[resultkey]]
-        shapes = [v.shape for v in values if v is not np.nan]
+        shapes = [v.shape for v in values if v is not np.nan and hasattr(v, 'shape')]
         if len(shapes) == 0:
-            return None
+            return np.stack(values)
         if not all(s == shapes[0] for s in shapes[1:]):
             raise Exception(f"data in variable {variablekey} in result {resultkey} does not have the same shape for all gate points")
         values = [np.broadcast_to(v, shapes[0]) for v in values]
