@@ -82,6 +82,20 @@ class VgatePipeline:
         values = [np.broadcast_to(v, shapes[0]) for v in values]
         return np.stack(values)
 
+    def get_config_value_as_array(self, resultkey, configpath: list):
+        self.results[resultkey]
+        values = [
+            reduce(lambda d, k: d[k], configpath, res['config']) if res is not None else np.nan
+            for res in self.results[resultkey]
+        ]
+        shapes = [v.shape for v in values if v is not np.nan and hasattr(v, 'shape')]
+        if len(shapes) == 0:
+            return np.stack(values)
+        if not all(s == shapes[0] for s in shapes[1:]):
+            raise Exception(f"data in config {'.'.join(configpath)} in result {resultkey} does not have the same shape for all gate points")
+        values = [np.broadcast_to(v, shapes[0]) for v in values]
+        return np.stack(values)
+
 
     def merge_qubit_P2(self, resultkey='qubit_P2', powerdecimals=2):
         """
