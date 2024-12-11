@@ -10,6 +10,12 @@ If interactive you can move through the dataset::
     plotter.make_plot()
     interact(plotter.update_plot, idx=IntSlider(min=0, max=plotter.get_N()-1));
 
+### TODO
+
+- Consistent axis titles and colorbars
+- Don't use ax as parameter for update, because it anyways keeps track
+  of other artists internally.
+
 """
 import numpy as np
 import matplotlib.pyplot as plt
@@ -24,13 +30,14 @@ def opx_pow2amp(pow, ext_gain_db=0):
 
 
 class VgatePipelinePlotter:
-    def __init__(self, Vgpl, fqestimate=None):
+    def __init__(self, Vgpl, fqestimate=None, expnames=None):
         self.Vgpl = Vgpl
         self.data = Vgpl.data
         self.Vgate = Vgpl.Vgate
         self.results = Vgpl.results
         self.barefreq = Vgpl.data['bareIF'][()] if 'bareIF' in Vgpl.data else np.nan
         self.fqestimate = fqestimate
+        self.expnames = expnames
 
     def get_N(self):
         return self.data['Vgate'].size
@@ -41,12 +48,15 @@ class VgatePipelinePlotter:
         fr = self.data['resonatorfit'][:,0,0]
 
         # list non-empty experiment results
-        expnames = [k for k,v in results.items() if not all(r is None for r in v) and not k == 'mixer_calibration']
+        if self.expnames is None:
+            expnames = [k for k,v in results.items() if not all(r is None for r in v) and not k == 'mixer_calibration']
+        else:
+            expnames = self.expnames
         # distribute in cols and rows
         nexp = len(expnames) + 1
         ncols = self.ncols = int(np.ceil(nexp**0.5))
         nrows = self.nrows = int(np.ceil(nexp/ncols))
-        fig, axs = self.fig, self.axs = plt.subplots(nrows=nrows, ncols=ncols, layout='constrained', figsize=(10, 8))
+        fig, axs = self.fig, self.axs = plt.subplots(nrows=nrows, ncols=ncols, squeeze=False, layout='constrained', figsize=(10, 8))
 
         axs[0,0].set_title('fr vs Vgate')
         axs[0,0].plot(Vgate, fr, '.-')
@@ -158,6 +168,37 @@ class VgatePipelinePlotter:
             self.meta[name]['img'].autoscale()
 
 
+    def plt_readoutSNR_P1(self, name, ax, firstidx):
+        res = self.results[name][firstidx]
+        power = self.meta[name]['readout_power'] = res['readout_power']
+        self.meta[name]['line'], = ax.plot(power, res.get('SNR', np.full(power.size, np.nan)))
+        ax.set_xlabel('readout power / dBm')
+        ax.set_ylabel('amp. SNR')
+
+    def update_readoutSNR_P1(self, name, ax, idx):
+        res = self.results[name][idx]
+        power = self.meta[name]['readout_power']
+        if res is None:
+            self.meta[name]['line'].set_ydata(np.full(power.size, np.nan))
+        else:
+            self.meta[name]['line'].set_ydata(res.get('SNR', np.full(power.size, np.nan)))
+            ax.relim(), ax.autoscale(), ax.autoscale_view()
+
+    def plt_qubit(self, name, ax, firstidx):
+        res = self.results[name][firstidx]
+        self.meta[name]['line'], = ax.plot(res['qubitIFs']/1e6, np.angle(res['Z']))
+        ax.set_xlabel('qubit drive IF / MHz')
+        ax.set_ylabel('arg S')
+
+    def update_qubit(self, name, ax, idx):
+        res = self.results[name][idx]
+        if res is None:
+            self.meta[name]['line'].set_data([np.nan], [np.nan])
+        else:
+            self.meta[name]['line'].set_data(res['qubitIFs']/1e6, np.unwrap(np.angle(res['Z'])))
+            ax.relim(), ax.autoscale(), ax.autoscale_view()
+
+
     def plt_qubit_P2(self, name, ax, firstidx):
         self.meta[name]['qubitIFrange'] = (
             min(min(r['qubitIFs'])+r['config']['qubitLO'] for r in self.results['qubit_P2'] if r is not None),
@@ -210,7 +251,7 @@ class VgatePipelinePlotter:
         if res is None:
             self.meta[name]['line'].set_ydata(np.full(self.meta[name]['duration'].size, np.nan))
         else:
-            self.meta[name]['line'].set_ydata(np.angle(res['Z']))
+            self.meta[name]['line'].set_ydata(np.unwrap(np.angle(res['Z'])))
             ax.relim(), ax.autoscale(), ax.autoscale_view()
 
 
@@ -225,7 +266,7 @@ class VgatePipelinePlotter:
         ax.set_xlabel('duration / ns')
         ax.set_ylabel('IF / MHz')
         ax.set_title(name + f"\n qubitLO={res['config']['qubitLO']/1e9:.2}GHz", fontsize=8)
-        ax.get_figure().colorbar(img, ax=ax, orientation='horizontal').set_label('arg S')
+        ax.get_figure().colorbar(img, ax=ax, orientation='horizontal', label='|Z - Z0|')
 
     def update_time_rabi_chevrons(self, name, ax, idx):
         res = self.results[name][idx]
@@ -233,7 +274,9 @@ class VgatePipelinePlotter:
             self.meta[name]['img'].set_array(np.full(self.meta[name]['xx'].shape, np.nan))
             ax.set_title(name, fontsize=8)
         else:
-            self.meta[name]['img'].set_array(np.unwrap(np.unwrap(np.angle(res['Z'])), axis=0).T)
+            #signal = np.unwrap(np.unwrap(np.angle(res['Z'])), axis=0)
+            signal = np.abs(res['Z'] - np.mean(res['Z'][:,0]))
+            self.meta[name]['img'].set_array(signal.T)
             self.meta[name]['img'].autoscale()
             self.meta[name]['line'].set_ydata([res['config']['qubitIF']/1e6])
             ax.set_title(
@@ -253,14 +296,14 @@ class VgatePipelinePlotter:
         if res is None:
             self.meta[name]['line'].set_ydata(np.full(self.meta[name]['amps'].size, np.nan))
         else:
-            self.meta[name]['line'].set_ydata(np.angle(res['Z']))
+            self.meta[name]['line'].set_ydata(np.unwrap(np.angle(res['Z'])))
             ax.relim(), ax.autoscale(), ax.autoscale_view()
 
 
     def plt_relaxation(self, name, ax, firstidx):
         res = self.results[name][firstidx]
         x = self.meta[name]['x'] = res['delay_ns']
-        self.meta[name]['line'], = ax.plot(x, np.angle(res['Z']))
+        self.meta[name]['line'], = ax.plot(x, np.abs(res['Z']-res['Z'][0]))
         ax.set_xlabel('delay / ns')
 
     def update_relaxation(self, name, ax, idx):
@@ -269,7 +312,8 @@ class VgatePipelinePlotter:
             self.meta[name]['line'].set_ydata(np.full(self.meta[name]['x'].size, np.nan))
             ax.set_title(name)
         else:
-            self.meta[name]['line'].set_ydata(np.angle(res['Z']))
+            signal = np.abs(res['Z'] - res['Z'][0])
+            self.meta[name]['line'].set_ydata(signal)
             ax.relim(), ax.autoscale(), ax.autoscale_view()
             ax.set_title(f"{name}\nqubitIF {res['config']['qubitIF']/1e6:.1f}MHz\n"
                          f"{res['drive_len_ns']:.0f}ns pulse {res['config']['pi_amp']:.5f}V{res['config']['qubit_output_gain']:+.1f}dB", fontsize=8)
@@ -313,27 +357,46 @@ class VgatePipelinePlotter:
 
     def plt_ramsey_chevron_repeat(self, name, ax, firstidx):
         res = self.results[name][firstidx]
-        ifs, ts = res['qubitIFs'], res['delay_ns']
-        xx, yy = np.meshgrid(ts, ifs/1e6, indexing='ij')
-        self.meta[name]['xx'] = xx
-        self.meta[name]['img'] = img = ax.pcolormesh(xx, yy, np.full(xx.shape, np.nan))
         self.meta[name]['line'] = ax.axhline(res['config']['qubitIF']/1e6, linestyle='--', color='r', linewidth=0.8, zorder=99)
         ax.set_xlabel('delay / ns')
         ax.set_ylabel('drive IF / MHz')
         ax.set_title(name + f"\n qubitLO={res['config']['qubitLO']/1e9:.2}GHz", fontsize=8)
-        ax.get_figure().colorbar(img, ax=ax, orientation='horizontal').set_label('arg S')
+        #ax.get_figure().colorbar(img, ax=ax, orientation='horizontal').set_label('arg S')
 
     def update_ramsey_chevron_repeat(self, name, ax, idx):
         res = self.results[name][idx]
+        try:
+            self.meta[name]['img'].remove()
+        except:
+            pass
         if res is None:
-            self.meta[name]['img'].set_array(np.full(self.meta[name]['xx'].shape, np.nan))
             ax.set_title(name, fontsize=8)
         else:
-            argS = np.unwrap(np.unwrap(np.angle(res['Z']), axis=0))
-            self.meta[name]['img'].set_array(np.mean(argS, axis=0).T)
-            self.meta[name]['img'].autoscale()
+            ifs, ts = res['qubitIFs'], res['delay_ns']
+            if 'Zg' in res:
+                signal = np.abs(np.mean(res['Z'], axis=0) - np.mean(res['Zg']))
+                signaltext = '|Z-Zg|'
+            else:
+                signal = np.unwrap(np.unwrap(np.angle(np.mean(res['Z'], axis=0)), axis=0))
+                signaltext = 'argS'
+            xx, yy = np.meshgrid(ts, ifs/1e6, indexing='ij')
+            self.meta[name]['xx'] = xx
+            self.meta[name]['img'] = img = ax.pcolormesh(xx, yy, signal.T)
             self.meta[name]['line'].set_ydata([res['config']['qubitIF']/1e6])
+            #ax.relim(), ax.autoscale(), ax.autoscale_view()
             ax.set_title(
                 name + f"\n qubitLO={res['config']['qubitLO']/1e9:.2}GHz cooldown {res['config']['cooldown_clk']*4/1000:.0f}us"
-                f"\n read {opx_amp2pow(res['config']['short_readout_amp']):+.1f}{res['config']['resonator_output_gain']:+.1f}dBm"
-                f" drive {res['config']['pi_amp']/2:+.5f}V {res['config']['qubit_output_gain']:+.1f}dBm", fontsize=8)
+                f"\nread {opx_amp2pow(res['config']['short_readout_amp']):+.1f}{res['config']['resonator_output_gain']:+.1f}dBm"
+                f"\ndrive {res['config']['pi_amp']/2:+.5f}V {res['config']['qubit_output_gain']:+.1f}dBm"
+                f"\nColor: {signaltext}", fontsize=8)
+
+
+    def plt_ramsey_anharmonicity(self, name, ax, firstidx):
+        return self.plt_ramsey_chevron_repeat(name, ax, firstidx)
+    def update_ramsey_anharmonicity(self, name, ax, idx):
+        return self.update_ramsey_chevron_repeat(name, ax, idx)
+
+    def plt_hahn_echo(self, name, ax, firstidx):
+        return self.plt_ramsey_chevron_repeat(name, ax, firstidx)
+    def update_hahn_echo(self, name, ax, idx):
+        return self.update_ramsey_chevron_repeat(name, ax, idx)
