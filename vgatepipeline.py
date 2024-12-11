@@ -4,7 +4,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from functools import reduce
 
-from helpers import plt2dimg
+from .helpers import plt2dimg
+from .pipeline_fits import fit_T1, fit_T2
 
 class VgatePipeline:
     """
@@ -186,3 +187,58 @@ class VgatePipeline:
             axs[i+1,0].set_ylabel(f"{key}\nf2 / GHz", fontsize=8)
         axs[-1,npowers//2].set_xlabel("Vgate / V")
         return fig
+
+    def fit_all_coherence(self, result_keys=None, print_info=True):
+        """
+        Fit T1, T2* and T2E for all gate points.
+
+        Returns
+        -------
+        dict
+            One item for each result key with the fit results. Fit results are dicts
+            with keys from fit_T1, fit_T2, ... but all fields converted to arrays
+            corresponding to Vgate, except for type, which is just a string.
+        """
+        results = {}
+        keys = self.non_empty_result_keys() if result_keys is None else result_keys
+        for key in keys:
+            if key == 'relaxation' or key.startswith('relaxation:'):
+                if print_info:
+                    print(key)
+                results[key] = [None]*self.Vgate.size
+                for i, res in enumerate(self.results[key]):
+                    try:
+                        if res is not None:
+                            results[key][i] = fit_T1(res, print_info=False)
+                    except Exception as e:
+                        if print_info:
+                            print("Vgate idx {i}:", repr(e))
+            elif (key == 'ramsey_chevron' or key.startswith('ramsey_chevron:')
+                  or key == 'ramsey_chevron_repeat' or key.startswith('ramsey_chevron_repeat:')):
+                if print_info:
+                    print(key)
+                results[key] = [None]*self.Vgate.size
+                for i, res in enumerate(self.results[key]):
+                    try:
+                        if res is not None:
+                            results[key][i] = fit_T2(res, print_info=False)
+                    except Exception as e:
+                        if print_info:
+                            print(f"Vgate idx {i}:", repr(e))
+
+        # Convert (dict of list of dicts) to (dict of dict with array)
+        results2 = {}
+        for key, fitlist in results.items():
+            if all(rec is None for rec in fitlist):
+                continue
+            fitvaluenames = set(k for rec in fitlist for k in rec.keys())
+            fitvaluenames.remove('type') # this gets a singular value instead of a list
+            fitresult = {'type': [rec['type'] for rec in fitlist][0]}
+            for vn in fitvaluenames:
+                values = [
+                    fitlist[i][vn] if fitlist[i] is not None and vn in fitlist[i] else np.nan
+                    for i in range(self.Vgate.size)]
+                fitresult[vn] = np.array(values)
+            results2[key] = fitresult
+
+        return results2
