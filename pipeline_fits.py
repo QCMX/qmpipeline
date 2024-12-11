@@ -76,7 +76,7 @@ def fit_relaxation(res, print_info=True, silent_exceptions=True):
         if silent_exceptions:
             if print_info:
                 print("   ", repr(e))
-            return np.full(len(p0), np.nan), np.full(len(p0), np.nan), np.nan
+            return np.full(len(p0), np.nan), np.full(len(p0), np.nan), np.full(signal.shape, np.nan), signal, ts
         else:
             raise e
 
@@ -91,11 +91,11 @@ def fit_relaxation(res, print_info=True, silent_exceptions=True):
     if np.any(~np.isfinite(popt)) or np.any(~np.isfinite(perr)):
         if print_info:
                 print("    Rejecting because of non-finite result")
-        return np.full(popt.size, np.nan), np.full(popt.size, np.nan), np.nan
+        return np.full(len(p0), np.nan), np.full(len(p0), np.nan), np.full(signal.shape, np.nan), signal, ts
     if popt[0] > max(ts)*3:
         if print_info:
                 print("    Rejecting because T1 longer than 3 times measurement duration")
-        return np.full(popt.size, np.nan), np.full(popt.size, np.nan), np.nan
+        return np.full(len(p0), np.nan), np.full(len(p0), np.nan), np.full(signal.shape, np.nan), signal, ts
 
     return popt, perr, model, signal, ts
 

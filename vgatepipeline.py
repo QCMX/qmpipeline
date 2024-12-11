@@ -231,9 +231,9 @@ class VgatePipeline:
         for key, fitlist in results.items():
             if all(rec is None for rec in fitlist):
                 continue
-            fitvaluenames = set(k for rec in fitlist for k in rec.keys())
+            fitvaluenames = set(k for rec in fitlist if rec is not None for k in rec.keys())
             fitvaluenames.remove('type') # this gets a singular value instead of a list
-            fitresult = {'type': [rec['type'] for rec in fitlist][0]}
+            fitresult = {'type': [rec['type'] for rec in fitlist if rec is not None][0]}
             for vn in fitvaluenames:
                 values = [
                     fitlist[i][vn] if fitlist[i] is not None and vn in fitlist[i] else np.nan
