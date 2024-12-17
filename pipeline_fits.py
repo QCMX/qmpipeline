@@ -270,6 +270,9 @@ def fit_T2(res, min_points=5, print_info=True):
     If there are at least 5 (or min_points) valid lines (drive frequencies), their average parameters is the result, weighted by fit uncertainty.
     The uncertainty is the standard deviation of parameters between lines, so it reflects the variation with drive frequency.
 
+    Note that for the Ramsey sequence with Gaussian pulses, the fitted T2* is based on the distance between drive pulse centers.
+    For the sequence with square pulses it is the spacing between drive pulses.
+
     Returns
     -------
     dict with keys
@@ -291,6 +294,8 @@ def fit_T2(res, min_points=5, print_info=True):
         mask |= (popt[:,1]/2 > popt[:,0])
         # Remove insignificant results compared to errorbars in T2 and amplitude
         mask |= (perr[:,0]*2 > np.abs(popt[:,0])) | (perr[:,1] > np.abs(popt[:,1]))
+        # Remove extreme T2
+        mask |= (popt[:,0] > 3*np.max(ts))
         # Remove small amplitudes compared to max amplitude (by hard-coded factor 10)
         mask |= (popt[:,2] < np.nanmax(popt[:,2])/10) 
 

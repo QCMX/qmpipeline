@@ -263,5 +263,6 @@ class VgatePipeline:
                     for i in range(self.Vgate.size)]
                 fitresult[vn] = np.array(values)
             results2[key] = fitresult
-
+        if len(results2):
+            results2['Vgate'] = self.Vgate
         return results2
