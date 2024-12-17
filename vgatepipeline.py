@@ -98,7 +98,7 @@ class VgatePipeline:
         return np.stack(values)
 
 
-    def merge_qubit_P2(self, resultkey='qubit_P2', powerdecimals=2):
+    def merge_qubit_P2(self, resultkey='qubit_P2', flatargS=False, powerdecimals=2):
         """
         Merge two-tone measurements of type `qubit_P2` with different
         LO/IF frequencies per gate point into one array with absolute frequency.
@@ -107,6 +107,10 @@ class VgatePipeline:
         ----------
         resultkey : str
             Key in results. Has to be a `qubit_P2` measurement.
+        flatargS : bool
+            If True converts complex value to argument and removes vertical average.
+            The result has the same shape but is of type float instead of complex.
+            Default False.
         powerdecimals : int
             Rounds power to this number of decimals before use and comparing.
             Since the power (in dB) is converted from a float log scale with boundaries
@@ -121,7 +125,8 @@ class VgatePipeline:
         power : numpy.ndarray
             Power values in dBm, output at octave
         Zmerged : numpy.ndarray
-            Complex valued scattering parameter with dimensions (Vgate, f2, power)
+            Complex valued scattering parameter with dimensions (Vgate, f2, power).
+            If flatargS is True, returns unwrapped arg(Zmerged) after removing column-wise averages.
         """
         assert resultkey == 'qubit_P2' or resultkey.startswith('qubit_P2:')
         fqs = np.sort(np.unique([res['qubitIFs']+res['config']['qubitLO'] for res in self.results[resultkey] if res is not None]))
@@ -145,7 +150,25 @@ class VgatePipeline:
             fexpand = np.full((fqs.size, powers.size), np.nan+0j)
             fexpand[fmask,:] = pexpand
             Zmerged[i] = fexpand
-        return fqs, powers, Zmerged
+        if flatargS:
+            argZmerged = np.full(Zmerged.shape, np.nan)
+            for i in range(Zmerged.shape[-1]):
+                argS = np.angle(Zmerged[:,:,i])
+                argSmean = []
+                for j in range(argS.shape[0]): # for every column
+                    # unwrap
+                    argS[j][~np.isnan(argS[j])] = np.unwrap(argS[j][~np.isnan(argS[j])], axis=0)
+                    # average over last ten values per gate point
+                    v = argS[j][~np.isnan(argS[j])][-10:]
+                    argSmean.append(np.mean(v) if len(v) else np.nan)
+                # flatten, then centered around argS=0
+                argS -= np.array(argSmean)[:,None]
+                # rewrap in -pi to +pi
+                argS = (argS+np.pi)%(2*np.pi)-np.pi
+                argZmerged[:,:,i] = argS
+            return fqs, powers, argZmerged
+        else:
+            return fqs, powers, Zmerged
 
 
     def plot_Vgate_2tone_multi(self, keys=None, npowers=3, **figkwargs):
