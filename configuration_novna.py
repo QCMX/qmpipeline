@@ -7,6 +7,7 @@ import numpy as np
 # Alors, should be 2*pi*time_of_flight = 1.70e-6 (roughly the same),
 # except for additional phase slope from microwave environment.
 PHASE_CORR = 1.88779e-06
+PHASE_CORR = 1.72066e-06
 
 # Note:
 # OPX outputs have 16bits, ie. 1V/2**16 =  15uV resolution
@@ -52,7 +53,7 @@ const_len = 20000
 const_amp = 0.1
 
 readout_len = 200000 # ns
-readout_amp = 0.0056
+readout_amp = 0.00178 # 0.0056 #
 
 short_readout_len = 2000 # ns
 short_readout_amp = 0.063

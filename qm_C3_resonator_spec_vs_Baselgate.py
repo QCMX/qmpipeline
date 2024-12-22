@@ -40,8 +40,7 @@ filename = '{datetime}_qm_resonator_vs_gate'
 fpath = data_path(filename, datesuffix='_qm')
 
 #Vgate = np.concatenate([np.linspace(-4.2, -5.2, int(5e3)+1)])
-Vgate = np.linspace(-4.5, -4.0, 5001)
-Vgate = np.linspace(-4, -0, 40001)
+Vgate = np.linspace(4.56, 4.58, 401)
 Vstep = np.mean(np.abs(np.diff(Vgate)))
 print(f"Vgate measurement step: {Vstep*1e6:.1f}uV avg")
 Ngate = Vgate.size
@@ -51,8 +50,8 @@ assert Vstep > 1.19e-6, "Vstep smaller than Basel resolution"
 # print(f"Gate hysteresis sweep ({abs(gate.get_voltage()-Vhyst)/GATERAMP_STEP*GATERAMP_STEPTIME/60:.1f}min)")
 # gate.ramp_voltage(Vhyst, 2*GATERAMP_STEP, GATERAMP_STEPTIME)
 
-Navg = 30
-f_min = 199e6
+Navg = 600 # 30
+f_min = 197e6
 f_max = 219e6
 df = 0.1e6
 freqs = np.arange(f_min, f_max + df/2, df)  # + df/2 to add f_max to freqs

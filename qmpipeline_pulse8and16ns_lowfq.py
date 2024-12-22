@@ -31,7 +31,7 @@ GATERAMP_STEPTIME = 0.02
 #%% JPA pump
 
 from RsInstrument import RsInstrument
-jpapump = RsInstrument('TCPIP::169.254.2.32::INSTR', id_query=True, reset=False)
+jpapump = RsInstrument('TCPIP::169.254.2.22::INSTR', id_query=True, reset=False)
 
 
 #%% JPA flux
@@ -66,8 +66,7 @@ importlib.reload(qminit)
 
 filename = '{datetime}_qmpipeline'
 fpath = data_path(filename, datesuffix='_qm')
-Vgate = np.linspace(4.5754, 4.576, 61)
-#Vgate = np.linspace(-3.977, -3.976, 41)
+Vgate = np.linspace(-4.255, -4.261, 21)
 Vstep = np.mean(np.abs(np.diff(Vgate)))
 print(f"Vgate measurement step: {Vstep*1e6:.1f}uV avg")
 Ngate = Vgate.size
@@ -78,7 +77,7 @@ fr_range = np.arange(200e6, 225e6, 0.05e6) # IF Hz
 # Length / distance of pulses for Rabi / Ramsey / Relaxation
 # It's nice to have the same length for everything to plot cohesive results later
 PROTOCOL_DURATION = 400
-T1DURATION = 800
+T1DURATION = 600
 
 # Vhyst = -5.20
 # print(f"Gate hysteresis sweep ({abs(gate.get_voltage()-Vhyst)/GATERAMP_STEP*GATERAMP_STEPTIME/60:.1f}min)")
@@ -98,16 +97,13 @@ jpameta = {
     'output': jpapump.query_int(':output?') == 1
 }
 if not jpameta['output']:
-    input("Info: JPA off [press enter]")
+    print("Info: JPA off [press enter]")
+    input()
 
 print(f"Setting gate ({abs(gate.get_voltage()-Vgate[0])/GATERAMP_STEP*GATERAMP_STEPTIME/60:.1f}min)")
 gate.ramp_voltage(Vgate[0], GATERAMP_STEP, GATERAMP_STEPTIME)
 
 baseconfig = qmtools.config_module_to_dict(config_pipeline)
-
-# Mixer cal before other calibration
-# TODO save result somewhere
-initial_mixercal = mixercal.run_after_interval(6*3600)
 
 # Not persistent.
 # Need to redo after every config reload
@@ -158,19 +154,17 @@ results = {
     'ramsey_chevron_repeat:gaussian_8ns': [None]*Ngate,
     'ramsey_chevron_repeat:gaussian_16ns': [None]*Ngate,
     'ramsey_anharmonicity:gaussian_8ns': [None]*Ngate,
-    'hahn_echo:8ns': [None]*Ngate,
-    'hahn_echo:16ns': [None]*Ngate,
 }
 resonator = np.full((Vgate.size, fr_range.size), np.nan+0j)
 frfit = np.full((Vgate.size, 4, 2), np.nan)
 
-fig, axs = plt.subplots(nrows=2, ncols=8, layout='constrained', figsize=(16, 7))
+fig, axs = plt.subplots(nrows=2, ncols=7, layout='constrained', figsize=(16, 7))
 frline, = axs[0,0].plot(Vgate, np.full(len(Vgate), np.nan), '.-', linewidth=1)
 axs[0,0].set_xlabel('Vgate / V')
 axs[0,0].set_ylabel('df / MHz')
 axs[0,0].set_title('Cavity resonance vs gate')
 
-progs = [None]*17
+progs = [None]*15
 estimator = DurationEstimator(Ngate)
 try:
     for i in range(Ngate):
@@ -196,7 +190,7 @@ try:
         # localconfig['readout_amp'] = 0.0316 # -20dBm
         localconfig['qubit_output_gain'] = -15 # turn off qubit; -15dB is minimum for 2GHz
 
-        prog = progs[0] = qmtools.QMResonatorSpec(qmm, localconfig, Navg=5000, resonatorIFs=fr_range)
+        prog = progs[0] = qmtools.QMResonatorSpec(qmm, localconfig, Navg=500, resonatorIFs=fr_range)
         results['resonator'][i] = resonatorspec = prog.run(plot=axs[1,0])
         resonator[i] = resonatorspec['Z']
 
@@ -226,7 +220,7 @@ try:
         localconfig['qmconfig']['waveforms']['readout_wf']['sample'] = 0.316
 
         prog = progs[2] = qmtools.QMResonatorSpec_P2(
-            qmm, localconfig, Navg=50,
+            qmm, localconfig, Navg=100,
             resonatorIFs=fr_range,
             readout_amps=np.logspace(np.log10(0.00316), np.log10(0.316), 29))
         results['resonator_P1'][i] = prog.run(plot=axs[0,1])
@@ -252,10 +246,6 @@ try:
         localconfig['qmconfig']['elements']['qubit']['mixInputs']['lo_frequency'] = qubitLO
         localconfig['qmconfig']['elements']['qubit2']['mixInputs']['lo_frequency'] = qubitLO
 
-        if fqest < 1.4e9:
-            print("fSkipping low fq < 1.4GHz")
-            continue
-
         #######
         # 2tone spectroscopy qubit vs power
         # Note: have room-T amp, max input is +4dBm
@@ -273,6 +263,11 @@ try:
             drive_amps=fq_amps)
         results['qubit_P2'][i] = qubitspecvspower = prog.run(plot=axs[0,2])
 
+        if fqest < 1.4e9:
+            print("fSkipping low estimated fq(fshift) < 1.4GHz")
+            continue
+
+        # Choose LO for IF in range -200 to -100 MHz
         qubitLO = int(max(2e9, np.ceil((fqest+0.10e9)/1e8)*1e8))
         print(f"Set qubit LO at {qubitLO/1e9}GHz")
         localconfig['qubitLO'] = qubitLO
@@ -294,10 +289,11 @@ try:
             qubittunefs = np.arange(-450e6, -50e6, 2e6)
 
         prog = progs[4] = qmtools.QMQubitSpec(
-            qmm, qubittuneconfig, Navg=1000,
+            qmm, qubittuneconfig, Navg=5000,
             qubitIFs=qubittunefs)
         results['qubit:1'][i] = prog.run(plot=axs[0,4])
-        MIN_fq_FINETUNE = 2.5e9
+
+        MIN_fq_FINETUNE = 1.0e9
         if fqest > MIN_fq_FINETUNE:
             try:
                 fqIF = prog.find_dip(ax=axs[0,4])
@@ -312,7 +308,7 @@ try:
                 qubittuneconfig['saturation_amp'] = 10**(-20/20) * AMP0dBm
     
                 prog = progs[4] = qmtools.QMQubitSpec(
-                    qmm, qubittuneconfig, Navg=1000,
+                    qmm, qubittuneconfig, Navg=5000,
                     qubitIFs=qubittunefs)
                 results['qubit:1hp'][i] = prog.run(plot=axs[0,4])
                 try:
@@ -324,7 +320,7 @@ try:
                 except qmtools.PipelineException as e:
                     print("Qubit update failed, keep original estimate:", repr(e))
         else:
-            print("Not updating qubit freq < 2.5GHz")
+            print(f"Not updating qubit freq < {MIN_fq_FINETUNE/1e9:f}GHz")
 
         if fqest >= 3.85e9:
             fqest2 = localconfig['qubitLO'] + localconfig['qubitIF']
@@ -364,17 +360,19 @@ try:
 
         localconfig['resonatorIF'] = resonatorfit[0][0]
         prog = progs[5] = qmtools.QMReadoutSNR_P1(
-            qmm, localconfig, Navg=10e3,
+            qmm, localconfig, Navg=50e3,
             readout_amps=np.logspace(-60/20, 0, 37) * AMP0dBm,
             drive_len=1000)
         results['readoutSNR_P1:non-demolition'][i] = res = prog.run(plot=axs[1,2])
 
-        localconfig['resonatorIF'] = int(bareIF)
-        prog = progs[5] = qmtools.QMReadoutSNR_P1(
-            qmm, localconfig, Navg=3e3,
-            readout_amps=np.logspace(-60/20, 0, 37) * AMP0dBm,
-            drive_len=1000)
-        results['readoutSNR_P1:destructive'][i] = res = prog.run(plot=axs[1,2])
+        fq = localconfig['qubitLO'] + localconfig['qubitIF']
+        if fq > 2.5e9:
+            localconfig['resonatorIF'] = int(bareIF)
+            prog = progs[5] = qmtools.QMReadoutSNR_P1(
+                qmm, localconfig, Navg=3e3,
+                readout_amps=np.logspace(-60/20, 0, 37) * AMP0dBm,
+                drive_len=1000)
+            results['readoutSNR_P1:destructive'][i] = res = prog.run(plot=axs[1,2])
 
         # Optimize readout power based on best SNR result
         try:
@@ -425,8 +423,8 @@ try:
         axs[0,5].axhline(localconfig['qubitIF']/1e6, color='r', linestyle='--', linewidth=0.8, zorder=100)
 
         prog = progs[7] = qmtools.QMTimeRabiChevrons(
-            qmm, localconfig, Navg=100,
-            qubitIFs=np.arange(-400e6, 10e6, 4e6),
+            qmm, localconfig, Navg=500,
+            qubitIFs=np.arange(-400e6, 10e6, 5e6),
             max_duration_ns=PROTOCOL_DURATION,
             drive_read_overlap_cycles=0)
         results['time_rabi_chevrons:1'][i] = prog.run(plot=axs[0,5])
@@ -446,7 +444,7 @@ try:
         ##############
         # Qubit Spec 1D
         prog = progs[9] = qmtools.QMQubitSpec(
-            qmm, qubittuneconfig, Navg=500,
+            qmm, qubittuneconfig, Navg=5000,
             qubitIFs=qubittunefs)
         results['qubit:2'][i] = prog.run(plot=axs[0,4])
         if fqest > MIN_fq_FINETUNE:
@@ -465,7 +463,7 @@ try:
         localconfig['qubit_output_gain'] = 0 # max +4
 
         prog = progs[10] = qmtools.QMPowerRabi_Gaussian(
-            qmm, localconfig, Navg=1e4, drive_len_ns=32, sigma_ns=8,
+            qmm, localconfig, Navg=5e4, drive_len_ns=32, sigma_ns=8,
             drive_amps=np.linspace(0, AMP0dBm, 160))
         results['power_rabi:gaussian_16ns'][i] = prog.run(plot=axs[1,3])
 
@@ -481,34 +479,25 @@ try:
         #######
         # Ramsey Chevrons, Gaussian 16ns
         fc = np.round(localconfig['qubitIF']/10e6)*10e6
-        ifs = np.arange(-100e6, 100e6, 4e6) + fc #np.linspace(-80e6, 80e6, 17) + fc
+        ifs = np.arange(-80e6, 80e6, 5e6) + fc
         prog = progs[11] = qmtools.QMRamseyChevronRepeat_Gaussian(
-            qmm, localconfig, qubitIFs=ifs, Nrep=4, Navg=50,
+            qmm, localconfig, qubitIFs=ifs, Nrep=4, Navg=200,
             drive_len_ns=32, sigma_ns=8, readout_delay_ns=16,
             max_delay_ns=PROTOCOL_DURATION)
-        results['ramsey_chevron_repeat:gaussian_16ns'][i] = prog.run(plot=axs[0,6])
-        
-        #######
-        # Hahn Echo 16ns
-        fc = np.round(localconfig['qubitIF']/10e6)*10e6
-        ifs = np.arange(-50e6, 50e6, 5e6) + fc #np.linspace(-80e6, 80e6, 17) + fc
-        prog = progs[15] = qmtools.QMHahn(
-            qmm, localconfig, Nrep=2, Navg=80, qubitIFs=ifs,
-            max_delay_ns=PROTOCOL_DURATION//2, drive_len_ns=32, sigma_ns=8, readout_delay_ns=16)
-        results['hahn_echo:16ns'][i] = prog.run(plot=axs[1,6])
-        
+        results['ramsey_chevron_repeat:gaussian_16ns'][i] = prog.run(plot=axs[1,5])
+
         #######
         # Relaxation
         # Uses pi pulse amplitude from config
         prog = progs[12] = qmtools.QMRelaxation(
-            qmm, localconfig, Navg=2e3, drive_len_ns=16,
+            qmm, localconfig, Navg=1e4, drive_len_ns=16,
             max_delay_ns=T1DURATION)
         results['relaxation:16ns'][i] = prog.run(plot=axs[1,4])
 
         ##############
         # Qubit Spec 1D
         prog = progs[9] = qmtools.QMQubitSpec(
-            qmm, qubittuneconfig, Navg=500,
+            qmm, qubittuneconfig, Navg=5000,
             qubitIFs=qubittunefs)
         results['qubit:3'][i] = prog.run(plot=axs[0,4])
         if fqest > MIN_fq_FINETUNE:
@@ -527,7 +516,7 @@ try:
         localconfig['qubit_output_gain'] = 0 # max +4
 
         prog = progs[10] = qmtools.QMPowerRabi_Gaussian(
-            qmm, localconfig, Navg=1e4, drive_len_ns=16, sigma_ns=4,
+            qmm, localconfig, Navg=5e4, drive_len_ns=16, sigma_ns=4,
             drive_amps=np.linspace(0, AMP0dBm, 81))
         results['power_rabi:gaussian_8ns'][i] = prog.run(plot=axs[1,3])
 
@@ -547,27 +536,18 @@ try:
         #######
         # Ramsey Chevrons, Gaussian 8ns
         fc = np.round(localconfig['qubitIF']/10e6)*10e6
-        ifs = np.arange(-100e6, 100e6, 4e6) + fc #np.linspace(-80e6, 80e6, 17) + fc
+        ifs = np.arange(-80e6, 80e6, 5e6) + fc #np.linspace(-80e6, 80e6, 17) + fc
         prog = progs[13] = qmtools.QMRamseyChevronRepeat_Gaussian(
-            qmm, localconfig, qubitIFs=ifs, Nrep=4, Navg=50,
+            qmm, localconfig, qubitIFs=ifs, Nrep=4, Navg=200,
             drive_len_ns=16, sigma_ns=4, readout_delay_ns=8,
             max_delay_ns=PROTOCOL_DURATION)
-        results['ramsey_chevron_repeat:gaussian_8ns'][i] = prog.run(plot=axs[0,7])
-        
-        #######
-        # Hahn Echo 8ns
-        fc = np.round(localconfig['qubitIF']/10e6)*10e6
-        ifs = np.arange(-50e6, 50e6, 5e6) + fc #np.linspace(-80e6, 80e6, 17) + fc
-        prog = progs[16] = qmtools.QMHahn(
-            qmm, localconfig, Nrep=2, Navg=80, qubitIFs=ifs,
-            max_delay_ns=PROTOCOL_DURATION//2, drive_len_ns=16, sigma_ns=4, readout_delay_ns=8)
-        results['hahn_echo:8ns'][i] = prog.run(plot=axs[1,7])
+        results['ramsey_chevron_repeat:gaussian_8ns'][i] = prog.run(plot=axs[1,6])
 
         #######
         # Relaxation
         # Uses pi pulse amplitude from config
         prog = progs[12] = qmtools.QMRelaxation(
-            qmm, localconfig, Navg=2e3, drive_len_ns=8,
+            qmm, localconfig, Navg=1e4, drive_len_ns=8,
             max_delay_ns=T1DURATION)
         results['relaxation:8ns'][i] = prog.run(plot=axs[1,4])
 
@@ -589,7 +569,7 @@ try:
         # Qubit Spec 1D
         qubittunefs = np.arange(-100e6, 100e6, 1e6) + np.round(localconfig['qubitIF']/10e6)*10e6
         prog = progs[9] = qmtools.QMQubitSpec(
-            qmm, qubittuneconfig, Navg=500,
+            qmm, qubittuneconfig, Navg=5000,
             qubitIFs=qubittunefs)
         results['qubit:4'][i] = prog.run(plot=axs[0,4])
         if fqest > MIN_fq_FINETUNE:
@@ -606,12 +586,12 @@ try:
         # Anharmonicity, Gaussian 8ns, with pi pulse
         #fc = np.round(localconfig['qubitIF']/10e6)*10e6
         #ifs = np.arange(-200e6, 200e6, 5e6) + fc #np.linspace(-80e6, 80e6, 17) + fc
-        ifs = np.arange(-200e6, 350e6, 4e6)
+        ifs = np.arange(-200e6, 350e6, 5e6)
         prog = progs[14] = qmtools.QMRamseyAnharmonicity(
-            qmm, localconfig, qubitIFs=ifs, Nrep=5, Navg=200,
+            qmm, localconfig, qubitIFs=ifs, Nrep=10, Navg=200,
             drive_len_ns=16, sigma_ns=4, readout_delay_ns=8,
-            max_delay_ns=152)
-        results['ramsey_anharmonicity:gaussian_8ns'][i] = prog.run(plot=axs[1,5])
+            max_delay_ns=PROTOCOL_DURATION)
+        results['ramsey_anharmonicity:gaussian_8ns'][i] = prog.run(plot=axs[0,6])
 finally:
     estimator.end()
     print("Saving data")
