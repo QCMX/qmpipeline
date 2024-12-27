@@ -470,7 +470,7 @@ try:
         results['power_rabi:gaussian_16ns'][i] = prog.run(plot=axs[1,3])
 
         try:
-            fit = prog.fit_pi_pulse(ax=axs[1,3], period0=0.13, plotp0=True)
+            fit = prog.fit_pi_pulse(ax=axs[1,3], plotp0=True)
             results['power_rabi:gaussian_16ns'][i]['fit'] = fit
             # Pi amp limited to +0dBm
             localconfig['pi_amp'] = min(10**(0/20)*AMP0dBm, fit['popt'][0] / 2)
@@ -491,7 +491,7 @@ try:
         #######
         # Hahn Echo 16ns
         fc = np.round(localconfig['qubitIF']/10e6)*10e6
-        ifs = np.arange(-50e6, 50e6, 5e6) + fc #np.linspace(-80e6, 80e6, 17) + fc
+        ifs = np.arange(-20e6, 20e6, 1e6) + fc #np.linspace(-80e6, 80e6, 17) + fc
         prog = progs[15] = qmtools.QMHahn(
             qmm, localconfig, Nrep=2, Navg=80, qubitIFs=ifs,
             max_delay_ns=PROTOCOL_DURATION//2, drive_len_ns=32, sigma_ns=8, readout_delay_ns=16)
@@ -500,8 +500,8 @@ try:
         #######
         # Relaxation
         # Uses pi pulse amplitude from config
-        prog = progs[12] = qmtools.QMRelaxation(
-            qmm, localconfig, Navg=2e3, drive_len_ns=16,
+        prog = progs[12] = qmtools.QMRelaxation_Gaussian(
+            qmm, localconfig, Navg=2e3, drive_len_ns=32, sigma_ns=8,
             max_delay_ns=T1DURATION)
         results['relaxation:16ns'][i] = prog.run(plot=axs[1,4])
 
@@ -510,10 +510,10 @@ try:
         prog = progs[9] = qmtools.QMQubitSpec(
             qmm, qubittuneconfig, Navg=500,
             qubitIFs=qubittunefs)
-        results['qubit:3'][i] = prog.run(plot=axs[0,4])
+        results['qubit:3'][i] = prog.run(plot=axs[0,3])
         if fqest > MIN_fq_FINETUNE:
             try:
-                fqIF = prog.find_dip(ax=axs[0,4])
+                fqIF = prog.find_dip(ax=axs[0,3])
                 fq = fqIF + qubitLO
                 print(f"  Qubit moved {(fqIF-localconfig['qubitIF'])/1e6:+.3f}MHz")
                 localconfig['qubitIF'] = fqIF
@@ -532,7 +532,7 @@ try:
         results['power_rabi:gaussian_8ns'][i] = prog.run(plot=axs[1,3])
 
         try:
-            fit = prog.fit_pi_pulse(ax=axs[1,3], period0=0.13, plotp0=True)
+            fit = prog.fit_pi_pulse(ax=axs[1,3], plotp0=True)
             results['power_rabi:gaussian_8ns'][i]['fit'] = fit
             if fit['popt'][0] < results['power_rabi:gaussian_16ns'][i]['fit']['popt'][0]:
                 print("8ns Gaussian Power rabi period fit failed. default to max power.")
@@ -557,7 +557,7 @@ try:
         #######
         # Hahn Echo 8ns
         fc = np.round(localconfig['qubitIF']/10e6)*10e6
-        ifs = np.arange(-50e6, 50e6, 5e6) + fc #np.linspace(-80e6, 80e6, 17) + fc
+        ifs = np.arange(-20e6, 20e6, 1e6) + fc #np.linspace(-80e6, 80e6, 17) + fc
         prog = progs[16] = qmtools.QMHahn(
             qmm, localconfig, Nrep=2, Navg=80, qubitIFs=ifs,
             max_delay_ns=PROTOCOL_DURATION//2, drive_len_ns=16, sigma_ns=4, readout_delay_ns=8)
@@ -566,8 +566,8 @@ try:
         #######
         # Relaxation
         # Uses pi pulse amplitude from config
-        prog = progs[12] = qmtools.QMRelaxation(
-            qmm, localconfig, Navg=2e3, drive_len_ns=8,
+        prog = progs[12] = qmtools.QMRelaxation_Gaussian(
+            qmm, localconfig, Navg=2e3, drive_len_ns=16, sigma_ns=4,
             max_delay_ns=T1DURATION)
         results['relaxation:8ns'][i] = prog.run(plot=axs[1,4])
 

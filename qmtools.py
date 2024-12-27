@@ -2378,9 +2378,11 @@ class QMPowerRabi (QMProgram):
         return prog
 
     @staticmethod
-    def cosine(amp, period, a, decay, bkg_slope, bkg_offs):
-        """Cosine function with background offset and slope to use for fitting."""
-        return -a * np.cos(2*np.pi * amp / period) * np.exp(-amp/decay) + bkg_slope * amp + bkg_offs
+    def cosine(amp, period, a, decay, bkg_slope):
+        """Cosine function with background offset and slope to use for fitting.
+        Constrained to be zero at t=0.
+        """
+        return a * (1+bkg_slope*amp) * (1 - np.cos(2*np.pi * amp / period) * np.exp(-amp/decay))
 
     def fit_cosine(
             self, result=None, ax=None, period0=0.05, plotp0=False,
@@ -2396,23 +2398,21 @@ class QMPowerRabi (QMProgram):
         amps = res['drive_amps']
         func = QMPowerRabi.cosine
         signal = np.abs(res['Z'] - res['Z'][0])
-        maxmin = np.max(signal)-np.min(signal)
         p0 = self.last_p0 = [
             period0, # period
-            maxmin/2.5, # amplitude
+            np.mean(signal), # amplitude
             max(amps)/2, # decay
             0, # bkg slant
-            np.mean(signal) # bkg offset
         ]
         bounds = (
-            [amps[2]-amps[0], 0, 0, -np.inf, np.min(signal)],
-            [np.max(amps)*2, maxmin/2, np.inf, np.inf, np.max(signal)])
+            [amps[2]-amps[0], 0, 0, -1/np.max(amps)],
+            [np.max(amps)*4, np.max(signal)*2, np.inf, 3/np.max(amps)])
         print(p0)
         print(bounds)
         popt, pcov = curve_fit(
             func, amps, signal, p0=p0, bounds=bounds)
         perr = np.sqrt(np.diag(pcov))
-        paramnames = ["period", "amplitude", "decay", "slope", "offset"]
+        paramnames = ["period", "amplitude", "decay", "slope"]
         if printinfo:
             res = [ufloat(opt, err) for opt, err in zip(popt, perr)]
             print("  Fit cosine to Power Rabi data")
@@ -2432,7 +2432,7 @@ class QMPowerRabi (QMProgram):
         }
 
     def fit_pi_pulse(
-            self, result=None, ax=None, period0=0.05, plotp0=False,
+            self, result=None, ax=None, plotp0=False,
             pltkw={'color': 'k', 'linewidth': 1}, printinfo=True):
         """Fit slanted sine shape to data, after selecting first period.
 
@@ -2449,28 +2449,30 @@ class QMPowerRabi (QMProgram):
 
         peaks, props = find_peaks(signal, prominence=maxmin/3)
         if peaks.size and peaks[0] >= 3:
+            print("Fitting up to first period at amp", amps[peaks[0]]*2, "idx", peaks[0]*2)
             # cut fit data to 2 * first peak position
             amps = amps[:peaks[0]*2]
             signal = signal[:peaks[0]*2]
             maxmin = np.max(signal)-np.min(signal)
             period0 = amps[peaks[0]]*2
+        else:
+            period0 = amps[-1]*2
 
         p0 = self.last_p0 = [
             period0, # period
-            maxmin/2.5, # amplitude
+            np.mean(signal), # amplitude
             max(amps)/2, # decay
             0, # bkg slant
-            np.mean(signal) # bkg offset
         ]
         bounds = (
-            [amps[2]-amps[0], 0, 0, -np.inf, np.min(signal)],
-            [np.max(amps)*2, maxmin/2, np.inf, np.inf, np.max(signal)])
+            [amps[2]-amps[0], 0, 0, -1/np.max(amps)],
+            [np.max(amps)*4, np.max(signal)*2, np.inf, 3/np.max(amps)])
         print(p0)
         print(bounds)
         popt, pcov = curve_fit(
             func, amps, signal, p0=p0, bounds=bounds)
         perr = np.sqrt(np.diag(pcov))
-        paramnames = ["period", "amplitude", "decay", "slope", "offset"]
+        paramnames = ["period", "amplitude", "decay", "slope"]
         if printinfo:
             uval = [ufloat(opt, err) for opt, err in zip(popt, perr)]
             print("  Fit cosine to Power Rabi data")
