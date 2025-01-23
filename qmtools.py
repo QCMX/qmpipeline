@@ -4361,7 +4361,7 @@ class QMHahn (QMRamseyChevronRepeat):
 
 if __name__ == '__main__':
     import importlib
-    import configuration_pipeline_sim as config
+    import configuration_pipeline_2 as config
     # import configuration as config
     importlib.reload(config)
 
@@ -4387,6 +4387,15 @@ if __name__ == '__main__':
     #     readout_amps=np.logspace(np.log10(0.000316), np.log10(0.0316), 21))
     # results = p.run(plot=True)
     # config.resonator_output_gain = -20
+
+    config.cooldown_clk = 100
+    config.short_readout_amp = 0.00316
+    p = QMResonatorExcited(
+        qmm, config, Navg=20000,
+        resonatorIFs=np.arange(199e6, 222e6, 0.05e6),
+        drive_len_ns=32, sigma_ns=8)
+    p.simulate(20000, plot=True)
+    #results = p.run(plot=True)
 
     # config.saturation_amp = 0.1
     # p = QMQubitSpec(qmm, config, Navg=1000,
@@ -4436,8 +4445,8 @@ if __name__ == '__main__':
     # p.check_timing(30000, plot=True)
     #results = p.run(plot=True)
 
-    p = QMHistogramIQ(qmm, config, Npoints=1, drive_len_ns=32, sigma_ns=8, readout_len_ns=1000, readout_amps=np.array([0.1, 0.2]) )
-    p.simulate(15000, plot=True)
+    #p = QMHistogramIQ(qmm, config, Npoints=1, drive_len_ns=32, sigma_ns=8, readout_len_ns=1000, readout_amps=np.array([0.1, 0.2]) )
+    #p.simulate(15000, plot=True)
     # config.qubitIF = 0
     # p = QMRamseyAnharmonicity(qmm, config, qubitIFs=np.linspace(0, 10e6, 11), Nrep=10, Navg=1000,
     #     drive_len_ns=32, sigma_ns=4, max_delay_ns=100, readout_delay_ns=4)

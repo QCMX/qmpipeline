@@ -6,7 +6,7 @@ import numpy as np
 # Use as Zcorr = Z * np.exp(1j * freqs * config.PHASE_CORR).
 # Alors, should be 2*pi*time_of_flight = 1.70e-6 (roughly the same),
 # except for additional phase slope from microwave environment.
-PHASE_CORR = 1.6239384827049928e-06
+PHASE_CORR = 1.72066e-06 #1.6239384827049928e-06
 
 # Note:
 # OPX outputs have 16bits, ie. 1V/2**16 =  15uV resolution
