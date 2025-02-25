@@ -99,8 +99,8 @@ class VgatePipelinePlotter:
         x = self.meta[name]['x'] = res['resonatorIFs'] / 1e6
         self.meta[name]['line'], = ax.plot(x, np.abs(res['Z']))
 
-    def update_resonator(self, name, ax, i):
-        res = self.results[name][i]
+    def update_resonator(self, name, ax, idx):
+        res = self.results[name][idx]
         if res is None:
             self.meta[name]['line'].set_ydata(np.full(self.meta[name]['x'].size, np.nan))
         else:
@@ -143,6 +143,25 @@ class VgatePipelinePlotter:
         else:
             self.meta[name]['img'].set_array(np.unwrap(np.abs(res['Z'])) / res['readout_amps'][None,:])
             self.meta[name]['img'].autoscale()
+
+    def plt_resonator_excited(self, name, ax, firstidx):
+        res = self.results[name][firstidx]
+        x = self.meta[name]['x'] = res['resonatorIFs'] / 1e6
+        self.meta[name]['line_exc'], = ax.plot(x, np.abs(res['Z'][:,0]), label="Excited state")
+        self.meta[name]['line_gnd'], = ax.plot(x, np.abs(res['Z'][:,1]), label="Ground state")
+
+    def update_resonator_excited(self, name, ax, idx):
+        res = self.results[name][idx]
+        if res is None:
+            self.meta[name]['line_exc'].set_ydata(np.full(self.meta[name]['x'].size, np.nan))
+            self.meta[name]['line_gnd'].set_ydata(np.full(self.meta[name]['x'].size, np.nan))
+        else:
+            self.meta[name]['line_exc'].set_ydata(np.abs(res['Z'][:,0]))
+            self.meta[name]['line_gnd'].set_ydata(np.abs(res['Z'][:,1]))
+            ax.relim(), ax.autoscale(), ax.autoscale_view()
+
+        ax.legend()
+        ax.set_xlabel('resonator IF / MHz')
 
 
     def plt_readoutSNR(self, name, ax, firstidx):
@@ -383,7 +402,7 @@ class VgatePipelinePlotter:
             self.meta[name]['xx'] = xx
             self.meta[name]['img'] = img = ax.pcolormesh(xx, yy, signal.T)
             self.meta[name]['line'].set_ydata([res['config']['qubitIF']/1e6])
-            #ax.relim(), ax.autoscale(), ax.autoscale_view()
+            ax.set_ylim(np.min(ifs/1e6), np.max(ifs/1e6))
             ax.set_title(
                 name + f"\n qubitLO={res['config']['qubitLO']/1e9:.2}GHz cooldown {res['config']['cooldown_clk']*4/1000:.0f}us"
                 f"\nread {opx_amp2pow(res['config']['short_readout_amp']):+.1f}{res['config']['resonator_output_gain']:+.1f}dBm"
