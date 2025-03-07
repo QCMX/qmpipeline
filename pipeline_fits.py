@@ -37,7 +37,84 @@ from uncertainties import ufloat
 # TODO fit ramsey chevron argZ (if Zq not available)
 
 
-def fit_relaxation(res, print_info=True, silent_exceptions=True):
+def fit_relaxation_iq(res, print_info=True, silent_exceptions=True):
+    """For 'relaxation:...' measurement, fit exponential decay in IQ plane:
+
+    $$Z = Z_e y + Z_g (1 - y)$$
+
+    $$y = e^{-t/T_1}$$
+
+    Rejects the result and returns nan if
+
+    - there is a RuntimeError during curve_fit, i.e. no convergence
+    - any error bar is not finite
+    - distance |Ze-Zg| < 2*sqrt(resvar)/sqrt(npoints)
+    - T1 is insignificant (T1 uncertainty > T1)
+    - T1 longer than 4 times the measurement duration
+
+    Returns
+    -------
+    popt : array of 2 values
+        (T1, amplitude) best fit values or NaNs.
+    perr : array of 2 values
+    model : 1D array complex
+        Model result
+    signal : 1D array complex
+        Signal used for fitting, equal to res['Z']
+    ts : 1D array
+        Pulse delay in ns corresponding to signal.
+    """
+    ts = res['delay_ns']
+
+    def fit_relaxation_iq(t, t1, reZe, imZe, reZg, imZg):
+        y = np.exp(-t / t1)
+        Z = (reZe+1j*imZe) * y + (reZg+1j*imZg) * (1 - y)
+        return Z.view(float)
+
+    p0 = [max(ts)/2, res['Z'][0].real, res['Z'][0].imag, res['Z'][-1].real, res['Z'][-1].imag]
+    try:
+        popt, pcov = curve_fit(fit_relaxation_iq, ts, res['Z'].view(float), p0=p0,
+            bounds=([0, -np.inf, -np.inf, -np.inf, -np.inf], np.inf))
+        perr = np.sqrt(np.diag(pcov))
+    except RuntimeError as e:
+        if silent_exceptions:
+            if print_info:
+                print("   ", repr(e))
+            return np.full(len(p0), np.nan), np.full(len(p0), np.nan), np.full(res['Z'].shape, np.nan), res['Z'], ts
+        else:
+            raise e
+
+    Ze = popt[1]+1j*popt[2]
+    Zg = popt[3]+1j*popt[4]
+    model = fit_relaxation_iq(ts, *popt).view(complex)
+    resvar = np.nanvar((res['Z']-model).real + (res['Z']-model).imag)
+
+    if print_info:
+        names = ["T1", "reZe", "imZe", "reZg", "imZg"]
+        for p, e, n in zip(popt, perr, names):
+            print("   ", n, ufloat(p, e))
+        print("    sqrt(resvar)", resvar**0.5)
+
+    if np.any(~np.isfinite(popt)) or np.any(~np.isfinite(perr)):
+        if print_info:
+            print("    Rejecting because of non-finite result")
+        return np.full(len(p0), np.nan), np.full(len(p0), np.nan), np.full(res['Z'].shape, np.nan), res['Z'], ts
+    if np.abs(Ze-Zg) < 2*(resvar/ts.size)**0.5:
+        print("    Rejecting because |Ze-Zg| < 2 sqrt(resvar)/sqrt(npoints)")
+        return np.full(len(p0), np.nan), np.full(len(p0), np.nan), np.full(res['Z'].shape, np.nan), res['Z'], ts
+    if popt[0] < perr[0]:
+        if print_info:
+            print("    Rejecting because T1 insignificant")
+        return np.full(len(p0), np.nan), np.full(len(p0), np.nan), np.full(res['Z'].shape, np.nan), res['Z'], ts
+    if popt[0] > max(ts)*4:
+        if print_info:
+            print("    Rejecting because T1 longer than 3 times measurement duration")
+        return np.full(len(p0), np.nan), np.full(len(p0), np.nan), np.full(res['Z'].shape, np.nan), res['Z'], ts
+
+    return popt, perr, model, res['Z'], ts
+
+
+def fit_relaxation_dist(res, print_info=True, silent_exceptions=True):
     """For 'relaxation:...' measurement, fit exponential decay.
 
     We don't have the ground state signal, because it is not guaranteed that the time series is much longer than T1.
@@ -239,7 +316,7 @@ def fit_T1(res, print_info=True):
     -------
     dict
     """
-    popt, perr, model, signal, ts = fit_relaxation(res, print_info, silent_exceptions=True)
+    popt, perr, model, signal, ts = fit_relaxation_iq(res, print_info, silent_exceptions=True)
     return {
         'type': 'T1', 'T': popt[0], 'Terr': perr[0],
         'drive_len': res['drive_len_ns'], 'pi_amp': res['config']['pi_amp'],
