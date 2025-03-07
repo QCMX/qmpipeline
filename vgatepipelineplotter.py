@@ -168,7 +168,7 @@ class VgatePipelinePlotter:
         res = self.results[name][firstidx]
         ifs = res['resonatorIFs']
         powers = res['readout_amps']
-        xx, yy = np.meshgrid(ifs/1e9, powers, indexing='ij')
+        xx, yy = np.meshgrid(ifs/1e6, powers, indexing='ij')
         self.meta[name]['xx'] = xx
         self.meta[name]['img']= ax.pcolormesh(xx, yy, np.full(xx.shape, np.nan))
         ax.set_xlabel('IF / MHz')
@@ -180,9 +180,12 @@ class VgatePipelinePlotter:
         if res is None:
             self.meta[name]['img'].set_array(np.full(self.meta[name]['xx'].shape, np.nan))
         else:
-            dist = np.abs(res['Z'][...,1] - res['Z'][...,0])
-            Zsingle = res['I_single_shot'] + 1j * res['Q_single_shot']
-            snr = dist / np.std(Zsingle, axis=0)[:,:,0]
+            if 'SNR' in res:
+                snr = res['SNR']
+            else:
+                dist = np.abs(res['Z'][...,1] - res['Z'][...,0])
+                Zsingle = res['I_single_shot'] + 1j * res['Q_single_shot']
+                snr = dist / np.std(Zsingle, axis=0)[:,:,0]
             self.meta[name]['img'].set_array(snr)
             self.meta[name]['img'].autoscale()
 
@@ -251,12 +254,6 @@ class VgatePipelinePlotter:
         # crosstalk
         ax.axhline((self.barefreq/2)/1e9, color='gray', linewidth=0.8, zorder=99)
         ax.axhline((2*qubitLO - self.barefreq/2)/1e9, color='gray', linewidth=0.8, zorder=99)
-
-        resrabi = self.results['time_rabi'][i]
-        if resrabi is not None:
-            ax.axhline((resrabi['config']['qubitIF']+resrabi['config']['qubitLO'])/1e9, linestyle='--', color='r', linewidth=0.8, zorder=100)
-
-        #ax.set_title(name+f"\n )
 
 
     def plt_time_rabi(self, name, ax, firstidx):
