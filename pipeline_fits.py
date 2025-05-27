@@ -181,7 +181,10 @@ def fit_Ramsey_chevron_IQdist(res, print_exception=True):
     """Fit (1-exp*cos) for each line in chevron based on distance from ground state.
     Works on RamseyChevron and RamseyChevronRepeat.
 
-    Signal is |Z-Zg|
+    Signal is |Z-Zg|.
+
+    Optimal parameters left NaN if fit fails (Exception in curve_fit or best
+    fit values close to initial values).
 
     Parameters
     ----------
@@ -228,14 +231,18 @@ def fit_Ramsey_chevron_IQdist(res, print_exception=True):
         p0 = [max(ts)/2, per0, np.mean(y), 0]
         try:
             popt[i], pcov = curve_fit(ramsey_model, ts, y, p0, bounds=ramseymodelbounds)
-            perr[i] = np.sqrt(np.diag(pcov))
-            model[i] = ramsey_model(ts, *popt[i])
+            if np.any(np.isclose(popt[i,:2], p0[:2], rtol=0, atol=1e-8)):
+                popt[i] = np.nan
+                if print_exception:
+                    print(f"Fit terminated with parameters unchanged.")
+            else:
+                perr[i] = np.sqrt(np.diag(pcov))
+                model[i] = ramsey_model(ts, *popt[i])
         except Exception as e:
             if print_exception:
                 print(f"Error in fitting idx {i}:", repr(e))
 
     return popt, perr, model, chevron, ts, res['qubitIFs']+res['config']['qubitLO']
-
 
 
 def fit_Ramsey_chevron_argS(res, min_snr=0, print_exception=True):
@@ -367,14 +374,14 @@ def fit_T2(res, min_points=5, print_info=True):
 
         # Remove data points with non-finite values or error bars
         mask = ~np.all(np.isfinite(popt), axis=1) | ~np.all(np.isfinite(perr), axis=1)
-        # Remove uncorrelated T2 and period
+        # Remove too correlated T2 and period, i.e. T2 < period/2
         mask |= (popt[:,1]/2 > popt[:,0])
         # Remove insignificant results compared to errorbars in T2 and amplitude
         mask |= (perr[:,0]*2 > np.abs(popt[:,0])) | (perr[:,1] > np.abs(popt[:,1]))
         # Remove extreme T2
         mask |= (popt[:,0] > 3*np.max(ts))
         # Remove small amplitudes compared to max amplitude (by hard-coded factor 10)
-        mask |= (popt[:,2] < np.nanmax(popt[:,2])/10) 
+        mask |= (popt[:,2] < np.nanmax(popt[:,2])/10)
 
         # SNR estimate:
         noise = np.nanstd(model-chevron, axis=1)
