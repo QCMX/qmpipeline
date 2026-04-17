@@ -855,9 +855,8 @@ class QMResonatorSpec_P2 (QMProgram):
                     with qua.for_(*from_array(a, amps)):
                         qua.wait(self.config['cooldown_clk'], 'resonator')
                         qua.wait(rand.rand_int(50)+4, 'resonator') # randomize demod error
-                        qua.measure('readout'*qua.amp(a), 'resonator', None,
-                                    qua.dual_demod.full(
-                                        'cos', 'out1', 'sin', 'out2', I),
+                        qua.measure('readout'*qua.amp(a), 'resonator',
+                                    qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
                                     qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
                         qua.save(I, I_st)
                         qua.save(Q, Q_st)
@@ -973,9 +972,8 @@ class QMResonatorDriveQubit(QMProgram):
                     with qua.for_(*from_array(a, amps)):
                         qua.play('saturation'*qua.amp(a), 'qubit')
                         qua.wait(readoutwait, 'resonator')
-                        qua.measure('readout'*qua.amp(read_amp_scale), 'resonator', None,
-                                    qua.dual_demod.full(
-                                        'cos', 'out1', 'sin', 'out2', I),
+                        qua.measure('readout'*qua.amp(read_amp_scale), 'resonator',
+                                    qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
                                     qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
                         qua.save(I, I_st)
                         qua.save(Q, Q_st)
@@ -1113,7 +1111,7 @@ class QMResonatorExcited(QMProgram):
                     qua.wait(12, 'qubit')
                     bakedrive.run()
                     qua.wait(12+tleft//4+rdelay//4, 'resonator')
-                    qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator', None,
+                    qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator',
                         qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
                         qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
                     qua.save(I, I_st)
@@ -1122,7 +1120,7 @@ class QMResonatorExcited(QMProgram):
                     qua.wait(rand.rand_int(50)+4, 'resonator') # randomize demod error
 
                     # Ground state spectroscopy
-                    qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator', None,
+                    qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator',
                         qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
                         qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
                     qua.save(I, I_st)
@@ -1241,9 +1239,8 @@ class QMNoiseSpectrum (QMProgram):
             qua.update_frequency('resonator', self.config['resonatorIF'])
 
             with qua.for_(n, 0, n < self.params['Nsamples'], n + 1):
-                qua.measure('readout'*qua.amp(amp_scale), 'resonator', None,
-                            qua.dual_demod.full(
-                                'cos', 'out1', 'sin', 'out2', I),
+                qua.measure('readout'*qua.amp(amp_scale), 'resonator',
+                            qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
                             qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
                 qua.save(I, I_st)
                 qua.save(Q, Q_st)
@@ -1358,9 +1355,8 @@ class QMQubitSpec (QMProgram):
                     qua.align()
                     qua.play('saturation'*qua.amp(drive_amp_scale), 'qubit')
                     qua.wait(readoutwait, 'resonator')
-                    qua.measure('readout'*qua.amp(read_amp_scale), 'resonator', None,
-                                qua.dual_demod.full(
-                                    'cos', 'out1', 'sin', 'out2', I),
+                    qua.measure('readout'*qua.amp(read_amp_scale), 'resonator',
+                                qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
                                 qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
                     qua.save(I, I_st)
                     qua.save(Q, Q_st)
@@ -1489,9 +1485,8 @@ class QMQubitSpec_P1(QMProgram):
                     with qua.for_(*from_array(a, amps)):
                         qua.play('saturation'*qua.amp(drive_amp_scale), 'qubit')
                         qua.wait(readoutwait, 'resonator')
-                        qua.measure('readout'*qua.amp(a), 'resonator', None,
-                                    qua.dual_demod.full(
-                                        'cos', 'out1', 'sin', 'out2', I),
+                        qua.measure('readout'*qua.amp(a), 'resonator',
+                                    qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
                                     qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
                         qua.save(I, I_st)
                         qua.save(Q, Q_st)
@@ -1590,7 +1585,7 @@ class QMQubitSpecThreeTone (QMProgram):
                     qua.play('saturation'*qua.amp(drive_amp_scale), 'qubit')
                     qua.play('saturation'*qua.amp(third_amp_scale), 'qubit2')
                     qua.wait(readoutwait, 'resonator')
-                    qua.measure('readout'*qua.amp(read_amp_scale), 'resonator', None,
+                    qua.measure('readout'*qua.amp(read_amp_scale), 'resonator',
                                 qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
                                 qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
                     qua.save(I, I_st)
@@ -1687,9 +1682,8 @@ class QMQubitSpec_P2 (QMProgram):
                         qua.align()
                         qua.play('saturation'*qua.amp(a), 'qubit')
                         qua.wait(readoutwait, 'resonator')
-                        qua.measure('readout'*qua.amp(read_amp_scale), 'resonator', None,
-                                    qua.dual_demod.full(
-                                        'cos', 'out1', 'sin', 'out2', I),
+                        qua.measure('readout'*qua.amp(read_amp_scale), 'resonator',
+                                    qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
                                     qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
                         qua.save(I, I_st)
                         qua.save(Q, Q_st)
@@ -1841,7 +1835,7 @@ class QMReadoutSNR (QMProgram):
                     with qua.for_(*from_array(a, amps)):
                         # drive OFF
                         qua.measure(
-                            'short_readout'*qua.amp(a), 'resonator', None,
+                            'short_readout'*qua.amp(a), 'resonator',
                             qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
                             qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
                         qua.save(I, I_st)
@@ -1855,7 +1849,7 @@ class QMReadoutSNR (QMProgram):
                         # qua.wait(readoutwait_cycles, 'resonator')
                         qua.align()
                         qua.measure(
-                            'short_readout'*qua.amp(a), 'resonator', None,
+                            'short_readout'*qua.amp(a), 'resonator',
                             qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
                             qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
                         qua.save(I, I_st)
@@ -2004,7 +1998,7 @@ class QMReadoutSNR_P1 (QMProgram):
                 with qua.for_(*from_array(a, amps)):
                     # drive OFF
                     qua.measure(
-                        'short_readout'*qua.amp(a), 'resonator', None,
+                        'short_readout'*qua.amp(a), 'resonator',
                         qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
                         qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
                     qua.save(I, I_st)
@@ -2018,7 +2012,7 @@ class QMReadoutSNR_P1 (QMProgram):
                     # qua.wait(readoutwait_cycles, 'resonator')
                     qua.align()
                     qua.measure(
-                        'short_readout'*qua.amp(a), 'resonator', None,
+                        'short_readout'*qua.amp(a), 'resonator',
                         qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
                         qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
                     qua.save(I, I_st)
@@ -2179,7 +2173,7 @@ class QMHistogramIQ (QMProgram):
                     # ground state measurement
                     qua.reset_phase('resonator')
                     qua.align()
-                    qua.measure('short_readout'*qua.amp(a), 'resonator', None,
+                    qua.measure('short_readout'*qua.amp(a), 'resonator',
                                 qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
                                 qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
                     qua.save(I, Ig_st)
@@ -2193,7 +2187,7 @@ class QMHistogramIQ (QMProgram):
                     baked_drive.run()
                     # qua.play('saturation'*qua.amp(drive_amp_scale), 'qubit')
                     qua.align()
-                    qua.measure('short_readout'*qua.amp(a), 'resonator', None,
+                    qua.measure('short_readout'*qua.amp(a), 'resonator',
                                 qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
                                 qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
                     qua.save(I, Ie_st)
@@ -2272,7 +2266,7 @@ class QMTimeTraceIQ (QMProgram):
                     # ground state measurement
                     qua.reset_phase('resonator')
                     qua.align()
-                    qua.measure('readout'*qua.amp(self.config['readout_amp']), 'resonator', None,
+                    qua.measure('readout'*qua.amp(self.config['readout_amp']), 'resonator',
                                 qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
                                 qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
                     qua.save(I, I_st)
@@ -2377,7 +2371,7 @@ class QMTimeRabi (QMProgram):
                     qua.wait(12+overlap_clk, 'qubit')
                     baked_saturation[l].run()
                     qua.wait(16, 'resonator')
-                    qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator', None,
+                    qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator',
                         qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
                         qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
                     qua.save(I, I_st)
@@ -2393,7 +2387,7 @@ class QMTimeRabi (QMProgram):
                         qua.play('saturation'*qua.amp(drive_amp_scale), 'qubit', duration=t)
                         qua.wait(16, 'resonator')
                         qua.wait(t, 'resonator')
-                        qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator', None,
+                        qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator',
                             qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
                             qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
                         qua.save(I, I_st)
@@ -2535,7 +2529,7 @@ class QMTimeRabiChevrons (QMTimeRabi):
                         qua.wait(12+overlap_clk, 'qubit')
                         baked_saturation[l].run()
                         qua.wait(16, 'resonator')
-                        qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator', None,
+                        qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator',
                             qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
                             qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
                         qua.save(I, I_st)
@@ -2551,7 +2545,7 @@ class QMTimeRabiChevrons (QMTimeRabi):
                             qua.play('saturation'*qua.amp(drive_amp_scale), 'qubit', duration=t)
                             qua.wait(16, 'resonator')
                             qua.wait(t, 'resonator')
-                            qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator', None,
+                            qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator',
                                 qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
                                 qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
                             qua.save(I, I_st)
@@ -2669,7 +2663,7 @@ class QMTimeRabiChevrons_InnerAvg (QMTimeRabi):
                             qua.wait(12+overlap_clk, 'qubit')
                             baked_saturation[l].run()
                             qua.wait(16, 'resonator')
-                            qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator', None,
+                            qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator',
                                 qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
                                 qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
                             qua.save(I, I_st)
@@ -2687,7 +2681,7 @@ class QMTimeRabiChevrons_InnerAvg (QMTimeRabi):
                                 qua.play('saturation'*qua.amp(drive_amp_scale), 'qubit', duration=t)
                                 qua.wait(16, 'resonator')
                                 qua.wait(t, 'resonator')
-                                qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator', None,
+                                qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator',
                                     qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
                                     qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
                                 qua.save(I, I_st)
@@ -2787,7 +2781,7 @@ class QMPowerRabi (QMProgram):
                     qua.wait(12+overlap_clk, 'qubit')
                     bakedrive.run(amp_array=[('qubit', a)])
                     qua.wait(12+drivepulselen_cycles, 'resonator')
-                    qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator', None,
+                    qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator',
                         qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
                         qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
                     qua.save(I, I_st)
@@ -3034,7 +3028,7 @@ class QMPowerRabi_Gaussian (QMPowerRabi):
                     qua.wait(12, 'qubit')
                     bakedrive.run(amp_array=[('qubit', a)])
                     qua.wait(12+tleft//4+rdelay//4, 'resonator')
-                    qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator', None,
+                    qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator',
                         qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
                         qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
                     qua.save(I, I_st)
@@ -3131,7 +3125,7 @@ class QMRelaxation (QMProgram):
                         qua.wait(12, 'qubit')
                         baked_saturation[i].run()
                         qua.wait(12+wflen//4 + j, 'resonator')
-                        qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator', None,
+                        qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator',
                             qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
                             qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
                         qua.save(I, I_st)
@@ -3146,7 +3140,7 @@ class QMRelaxation (QMProgram):
                         baked_saturation[i].run()
                         qua.wait(12+wflen//4, 'resonator')
                         qua.wait(t4, 'resonator')
-                        qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator', None,
+                        qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator',
                             qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
                             qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
                         qua.save(I, I_st)
@@ -3317,7 +3311,7 @@ class QMRelaxation_Gaussian (QMRelaxation):
                         qua.wait(12, 'qubit')
                         baked_pulses[i].run()
                         qua.wait(12+wflen//4 + j, 'resonator')
-                        qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator', None,
+                        qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator',
                             qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
                             qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
                         qua.save(I, I_st)
@@ -3333,7 +3327,7 @@ class QMRelaxation_Gaussian (QMRelaxation):
                         baked_pulses[i].run()
                         qua.wait(12+wflen//4, 'resonator')
                         qua.wait(t4, 'resonator')
-                        qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator', None,
+                        qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator',
                             qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
                             qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
                         qua.save(I, I_st)
@@ -3463,7 +3457,7 @@ class QMRamsey (QMProgram):
                     qua.wait(12, 'qubit')
                     baked_driveshort[j].run()
                     qua.wait(12+shortwflen//4, 'resonator')
-                    qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator', None,
+                    qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator',
                         qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
                         qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
                     qua.save(I, I_st)
@@ -3482,7 +3476,7 @@ class QMRamsey (QMProgram):
                         # readout
                         qua.wait(12+driveAlen//4+driveBlen//4, 'resonator')
                         qua.wait(t4, 'resonator')
-                        qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator', None,
+                        qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator',
                             qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
                             qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
                         qua.save(I, I_st)
@@ -3628,7 +3622,7 @@ class QMRamseyRepeat (QMProgram):
                         qua.wait(12, 'qubit')
                         baked_driveshort[j].run()
                         qua.wait(12+shortwflen//4, 'resonator')
-                        qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator', None,
+                        qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator',
                             qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
                             qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
                         qua.save(I, I_st)
@@ -3647,7 +3641,7 @@ class QMRamseyRepeat (QMProgram):
                             # readout
                             qua.wait(12+driveAlen//4+driveBlen//4, 'resonator')
                             qua.wait(t4, 'resonator')
-                            qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator', None,
+                            qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator',
                                 qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
                                 qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
                             qua.save(I, I_st)
@@ -3797,7 +3791,7 @@ class QMRamseyChevronRepeat (QMProgram):
 
                         # Ground state reference, no drive
                         qua.align()
-                        qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator', None,
+                        qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator',
                             qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
                             qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
                         qua.save(I, Ig_st)
@@ -3811,7 +3805,7 @@ class QMRamseyChevronRepeat (QMProgram):
                             qua.wait(12, 'qubit')
                             baked_driveshort[j].run()
                             qua.wait(12+shortwflen//4, 'resonator')
-                            qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator', None,
+                            qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator',
                                 qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
                                 qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
                             qua.save(I, I_st)
@@ -3830,7 +3824,7 @@ class QMRamseyChevronRepeat (QMProgram):
                                 # readout
                                 qua.wait(12+driveAlen//4+driveBlen//4, 'resonator')
                                 qua.wait(t4, 'resonator')
-                                qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator', None,
+                                qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator',
                                     qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
                                     qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
                                 qua.save(I, I_st)
@@ -4102,7 +4096,7 @@ class QMRamseyChevronRepeat_Gaussian (QMRamseyChevronRepeat):
 
                         # Ground state reference, no drive
                         qua.align()
-                        qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator', None,
+                        qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator',
                             qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
                             qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
                         qua.save(I, Ig_st)
@@ -4116,7 +4110,7 @@ class QMRamseyChevronRepeat_Gaussian (QMRamseyChevronRepeat):
                             qua.wait(12, 'qubit')
                             baked_driveshort[j].run()
                             qua.wait(12+shortwfend//4+readoutdelay//4, 'resonator')
-                            qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator', None,
+                            qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator',
                                 qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
                                 qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
                             qua.save(I, I_st)
@@ -4135,7 +4129,7 @@ class QMRamseyChevronRepeat_Gaussian (QMRamseyChevronRepeat):
                                 # readout
                                 qua.wait(12+longwfminreadoutcycles, 'resonator')
                                 qua.wait(t4, 'resonator')
-                                qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator', None,
+                                qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator',
                                     qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
                                     qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
                                 qua.save(I, I_st)
@@ -4394,7 +4388,7 @@ class QMRamseyAnharmonicity (QMRamseyChevronRepeat):
 
                         # Ground state reference, no drive
                         qua.align()
-                        qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator', None,
+                        qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator',
                             qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
                             qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
                         qua.save(I, Ig_st)
@@ -4410,7 +4404,7 @@ class QMRamseyAnharmonicity (QMRamseyChevronRepeat):
                             qua.wait(shortwf_twait_cycles, 'qubit')
                             baked_driveshort[j].run()
                             qua.wait(shortwf_twait_cycles+shortwfend//4+readoutdelay//4, 'resonator')
-                            qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator', None,
+                            qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator',
                                 qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
                                 qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
                             qua.save(I, I_st)
@@ -4432,7 +4426,7 @@ class QMRamseyAnharmonicity (QMRamseyChevronRepeat):
                                 # readout
                                 qua.wait(12+tg//4+longwfminreadoutcycles, 'resonator')
                                 qua.wait(t4, 'resonator')
-                                qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator', None,
+                                qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator',
                                     qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
                                     qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
                                 qua.save(I, I_st)
@@ -4624,7 +4618,7 @@ class QMHahn (QMRamseyChevronRepeat):
 
                         # Ground state reference, no drive
                         qua.align()
-                        qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator', None,
+                        qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator',
                             qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
                             qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
                         qua.save(I, Ig_st)
@@ -4638,7 +4632,7 @@ class QMHahn (QMRamseyChevronRepeat):
                             qua.wait(12, 'qubit')
                             baked_driveshort[j].run()
                             qua.wait(12+shortwfend//4+readoutdelay//4, 'resonator')
-                            qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator', None,
+                            qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator',
                                 qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
                                 qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
                             qua.save(I, I_st)
@@ -4661,7 +4655,7 @@ class QMHahn (QMRamseyChevronRepeat):
                                 qua.wait(t4, 'resonator')
                                 qua.wait(12+longwfminreadoutcycles, 'resonator')
                                 qua.wait(t4, 'resonator')
-                                qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator', None,
+                                qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator',
                                     qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
                                     qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
                                 qua.save(I, I_st)
