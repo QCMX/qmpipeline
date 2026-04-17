@@ -702,7 +702,7 @@ class QMResonatorSpec (QMProgram):
         ax.relim(), ax.autoscale(), ax.autoscale_view()
 
     @staticmethod
-    def lorentzian_amplitude(f, f0, width, a, tau0):
+    def lorentzian_amplitude(f, f0, width, a, tau0, tau):
         """Complex 'squareroot' of the Lorentzian. Fits amplitude of
         resonator in transmission.
 
@@ -718,13 +718,14 @@ class QMResonatorSpec (QMProgram):
             Amplitude.
         tau0 : float
             Phase on resonance.
+        tau : float
+            Electric delay.
 
         Returns
         -------
         float or array
             Same shape as f.
         """
-        tau = 0
         L = (width/2) / ((width/2) + 1j*(f - f0))
         return (a * np.exp(1j*(tau0 + tau*(f-f0))) * L).view(float)
 
@@ -766,18 +767,19 @@ class QMResonatorSpec (QMProgram):
             freqs[np.argmax(np.abs(Z))], #(np.mean(freqs[:5]) + np.mean(freqs[-5:])) / 2,  # f0
             (np.max(freqs[-1])-np.min(freqs[0])) / 3,  # width
             np.max(np.abs(Z)),  # amplitude
-            np.angle(Z[np.argmax(np.abs(Z))])  # angle
+            np.angle(Z[np.argmax(np.abs(Z))]),  # angle
+            0, # electric delay
         ]
         popt, pcov = curve_fit(
             func, freqs, Z.view(float), p0=p0,
             bounds=(
-                [np.min(freqs), np.diff(freqs)[0], 0, -np.inf],
-                [np.max(freqs), np.max(freqs)-np.min(freqs), np.inf, np.inf]))
+                [np.min(freqs), np.diff(freqs)[0], 0, -np.inf, -np.inf],
+                [np.max(freqs), np.max(freqs)-np.min(freqs), np.inf, np.inf, np.inf]))
         perr = np.sqrt(np.diag(pcov))
         if printinfo:
             res = [ufloat(opt, err)
                    for opt, err in zip(popt, np.sqrt(np.diag(pcov)))]
-            for r, name in zip(res, ["f0", "width", "a", "tau"]):
+            for r, name in zip(res, ["f0", "width", "a", "tau0", "tau"]):
                 print(f"    {name:6s} {r}")
         if ax:
             ax.plot(freqs/1e6, np.abs(func(freqs, *popt).view(complex)), '-', **pltkw)
