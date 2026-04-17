@@ -46,16 +46,17 @@ qubitIF = -93e6
 # 8000 cycles = 32us
 # 8750 cycles = 35us
 # 12500 cycles = 50us
-cooldown_clk = 8750 # cycles
+cooldown_clk = 1000# 8750 # cycles
 
 ## Readout pulse parameters
 const_len = 10000
 const_amp = 0.316
 
 readout_len = 20000 # ns
-readout_amp = 0.00316 #0.0056
+readout_amp = 0.001# 0.00316 #0.0056
+#readout_amp = 0.0316 #0.0056
 
-short_readout_len = 340 # ns
+short_readout_len = 680 # 680 # 340 # ns
 short_readout_amp = 0.316
 
 # Time it takes the pulses to go through the RF chain, including the device.

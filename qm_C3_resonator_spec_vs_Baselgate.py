@@ -19,7 +19,7 @@ import qminit
 
 qmm = qminit.connect()
 
-#%%
+#%% Connect Basel DC
 
 from instruments.basel import BaselDACChannel
 
@@ -28,10 +28,10 @@ gate = BaselDACChannel(7)
 assert gate.get_state(), "Basel channel not ON"
 print("CH", gate.channel, ":", gate.get_voltage(), "V")
 
-GATERAMP_STEP = 2e-6
+GATERAMP_STEP = 4e-6
 GATERAMP_STEPTIME = 0.01
 
-#%%
+#%% RUN
 
 importlib.reload(config)
 importlib.reload(qminit)
@@ -40,7 +40,10 @@ filename = '{datetime}_qm_resonator_vs_gate'
 fpath = data_path(filename, datesuffix='_qm')
 
 #Vgate = np.concatenate([np.linspace(-4.2, -5.2, int(5e3)+1)])
-Vgate = np.linspace(4.56, 4.58, 401)
+Vgate = np.linspace(-4.75, -4.9, 751)
+#Vgate = np.linspace(-4.82, -4.85, 201)
+Vgate = np.linspace(-4.9, -4.7, 1001)
+Vgate = np.linspace(-4.77, -4.83, 301)
 Vstep = np.mean(np.abs(np.diff(Vgate)))
 print(f"Vgate measurement step: {Vstep*1e6:.1f}uV avg")
 Ngate = Vgate.size
@@ -50,10 +53,10 @@ assert Vstep > 1.19e-6, "Vstep smaller than Basel resolution"
 # print(f"Gate hysteresis sweep ({abs(gate.get_voltage()-Vhyst)/GATERAMP_STEP*GATERAMP_STEPTIME/60:.1f}min)")
 # gate.ramp_voltage(Vhyst, 2*GATERAMP_STEP, GATERAMP_STEPTIME)
 
-Navg = 600 # 30
+Navg = 20 # 30
 f_min = 197e6
-f_max = 219e6
-df = 0.1e6
+f_max = 222e6
+df = 0.05e6
 freqs = np.arange(f_min, f_max + df/2, df)  # + df/2 to add f_max to freqs
 Nf = len(freqs)
 
@@ -97,7 +100,7 @@ fig, ax = plt.subplots()
 img = plt2dimg(ax, Vgate, freqs, np.abs(dataS21))
 ax.set_xlabel("Vgate / V")
 ax.set_ylabel("resonator IF")
-#ax.yaxis.set_major_formatter(EngFormatter(sep='', unit='Hz'))
+#ax.yaxis.set_major_formatter(EngFormatter(sep='', unit='Hz-4.75, -4.85, 01)'))
 fig.colorbar(img, ax=ax).set_label("|S| / linear")
 readoutpower = 10*np.log10(config.readout_amp**2 * 10) # V to dBm
 saturationpower = 10*np.log10(config.saturation_amp**2 * 10) # V to dBm
@@ -178,7 +181,7 @@ finally:
     fig.suptitle(title, fontsize=8)
     fig.savefig(fpath+'.png', dpi=300)
 
-#%%
+#%% Load and plot argS at f1
 
 dat = np.load('2024-02-20_qm/2024-02-20_17-41-16_qm_resonator_vs_gate.npz')
 dat.files
@@ -188,21 +191,20 @@ fidx = np.argmin(np.abs(dat['f'] - 206.5e6))
 plt.figure()
 plt.plot(dat['Vgate'], np.angle(dat['dataS21'])[:,fidx])
 
-#%%
+#%% Shuttle Gate
 
-#Shuttle
-Vtarget = -4.23
+Vtarget = -4.811
 
 step = 2e-6
 steptime = 0.01
 print("Ramp time:", np.abs(Vtarget - gate.get_voltage()) / step * steptime / 60, "min")
 gate.ramp_voltage(Vtarget, step, steptime)
 
-#%%
-#Shuttle
+#%% Shuttle Gate to 0
+
 Vtarget = 0
 
-step = 2e-6
+step = 10e-6
 steptime = 0.01
 print("Ramp time:", np.abs(Vtarget - gate.get_voltage()) / step * steptime / 60, "min")
 gate.ramp_voltage(Vtarget, step, steptime)
