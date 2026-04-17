@@ -3,6 +3,8 @@
 """
 Scriptable set of quantum machine programs for calibration and measurement pipelines.
 
+Adapted to qm-qua version 1.2.6.
+
 Notes
 -----
 Need to propagate KeyboardInterrupt to stop pipeline.
@@ -89,7 +91,24 @@ from qualang_tools.loops import from_array
 from qualang_tools.bakery import baking
 
 import qminit
-from helpers import mpl_pause
+
+
+# https://stackoverflow.com/a/55456635
+import matplotlib
+def mpl_pause(interval):
+    """Like matplotlib.pause() but doesn't grab focus for plot window."""
+    backend = matplotlib.get_backend()
+    if backend.lower() in [s.lower() for s in matplotlib.rcsetup.interactive_bk]:
+        figManager = matplotlib._pylab_helpers.Gcf.get_active()
+        if figManager is not None:
+            canvas = figManager.canvas
+            if canvas.figure.stale:
+                canvas.draw()
+            canvas.start_event_loop(interval)
+        else:
+            time.sleep(interval)
+    else:
+        pass
 
 
 def config_module_to_dict(module):
@@ -103,8 +122,42 @@ def opx_amp2pow(amp, ext_gain_db=0):
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')
         return 10*np.log10(amp**2 * 10) + ext_gain_db
+
 def opx_pow2amp(pow, ext_gain_db=0):
     return np.sqrt(10**((pow-ext_gain_db)/10) / 10)
+
+
+def get_element_octave_lo(config, elem):
+    """Get LO settings for element.
+
+    Returns
+    -------
+    2-tuple of (input LO, output LO) in Hz.
+    Either may be None if the element has not input or output defined.
+    'input' here refers to the path into the cryostat.
+    'output' refers to return path towards QM.
+    """
+    res = ()
+    for inout in ['RF_inputs', 'RF_outputs']:
+        if inout in config['qmconfig']['elements'][elem]:
+            octavename, rfportnum = config['qmconfig']['elements'][elem][inout]['port']
+            # Note: what is called RF_inputs on an element are the RF_outputs on the octave and vice versa.
+            octaveinout = 'RF_outputs' if inout == 'RF_inputs' else 'RF_inputs'
+            lo = config['qmconfig']['octaves'][octavename][octaveinout][rfportnum]['LO_frequency']
+            res += (lo,)
+        else:
+            res += (None,)
+    return res
+
+def set_element_octave_lo(config, elem, lo):
+    """Set LO frequency in 'octaves' section of QM config."""
+    for inout in ['RF_inputs', 'RF_outputs']:
+        if inout in config['qmconfig']['elements'][elem]:
+            octavename, rfportnum = config['qmconfig']['elements'][elem][inout]['port']
+            # Note: what is called RF_inputs on an element are the RF_outputs on the octave and vice versa.
+            octaveinout = 'RF_outputs' if inout == 'RF_inputs' else 'RF_inputs'
+            config['qmconfig']['octaves'][octavename][octaveinout][rfportnum]['LO_frequency'] = lo
+            print(f"Set LO for {elem} {inout} on {octavename} {octaveinout} {rfportnum} to {lo/1e9}GHz")
 
 
 class PipelineException (Exception):
@@ -238,12 +291,6 @@ class QMProgram (object):
         # So need to do this before opening QM
         if not hasattr(self, 'qmprog'):
             self._make_program()
-
-        # If LO is different for two elements on the same mixer, the wrong
-        # calibration is loaded.
-        assert (self.config['qmconfig']['elements']['qubit']['mixInputs']['lo_frequency']
-                == self.config['qmconfig']['elements']['qubit2']['mixInputs']['lo_frequency']), \
-            "Elements qubit and qubit2 do not have same LO freq"
 
         # qmm.open_qm modifies the mixer section of the configuration dict,
         # replacing it with values from the calibration db
@@ -447,28 +494,29 @@ class QMMixerCalibration (QMProgram):
         qm = self.qmm.open_qm(self.config['qmconfig'])
         self._init_octave(qm)
         print("Running calibration on resonator channel...")
-        rcal = qm.octave.calibrate_element(
-            'resonator', [(self.config['resonatorLO'], self.config['resonatorIF'])])
-        rcal = list(rcal.values())[0].__dict__
-        # delete to remove MonitorData object from qua
-        # Otherwise qua.octave is required to be installed to unpickle this
-        del rcal['temperature']
-        if rcal['correction'] == [1, 0, 0, 1]:
+        rcal = qm.calibrate_element('resonator')
+        rcal = rcal[list(rcal)[0]] # only one LO,IF pair, take first element
+        # delete to remove native qm/qua objects
+        # otherwise qua.octave is required to be installed to unpickle this
+        rcal = {k: rcal.__dict__[k] for k in ['i0', 'q0', 'dc_gain', 'dc_phase', 'temperature']}
+        if rcal['dc_gain'] == 0 and rcal['dc_phase'] == 0:
             warnings.warn(f"Resonator calibration LO {self.config['resonatorLO']/1e9:f}GHz IF{self.config['resonatorIF']/1e6:f}MHz failed (result is identity matrix).")
 
+        # Note: qm calibration only works with the first IF in {LO: [IF1, IF2, If3, ...]}
         qubitLOs = list(self.params['qubitLOs'])
         if self.config['qubitLO'] not in qubitLOs:
             qubitLOs.append(self.config['qubitLO'])
         print(f"Running calibration on qubit channel for {len(self.params['qubitLOs'])} LO frequencies...")
+        lodict = {lo: [self.config['qubitIF']] for lo in qubitLOs}
+        qcalres = qm.calibrate_element('qubit', lodict)
+        # reshape and check results
         qcal = []
-        for lof in qubitLOs:
-            qm.octave.set_lo_frequency('qubit', lof)
-            cal = qm.octave.calibrate_element(
-                'qubit', [(lof, self.config['qubitIF'])])
-            cal = list(cal.values())[0].__dict__
-            del cal['temperature']
-            if cal['correction'] == [1, 0, 0, 1]:
-                warnings.warn(f"Qubit calibration LO {lof/1e9:f}GHz IF{self.config['qubitIF']/1e6:f}MHz failed (result is identity matrix).")
+        for (lo, _), calres in qcalres.items():
+            cal = {k: calres.__dict__[k] for k in ['i0', 'q0', 'dc_gain', 'dc_phase', 'temperature']}
+            cal['lo'] = lo
+            cal['if'] = self.config['qubitIF']
+            if cal['dc_gain'] == 0 and cal['dc_phase'] == 0:
+                warnings.warn(f"Qubit calibration LO {lo/1e9:f}GHz IF{self.config['qubitIF']/1e6:f}MHz failed (no correction).")
             qcal.append(cal)
         return {'resonator': rcal, 'qubit': qcal} | self.params | {'config': self.config}
 
@@ -508,9 +556,9 @@ class QMTimeOfFlight (QMProgram):
             qua.update_frequency('resonator', self.config['resonatorIF'])
 
             with qua.for_(n, 0, n < self.Navg, n + 1):
-                qua.reset_phase('resonator')
+                qua.reset_if_phase('resonator')
                 # qua.play('preload', 'resonator')
-                qua.measure('readout'*qua.amp(amp_scale), 'resonator', adc_st)
+                qua.measure('readout'*qua.amp(amp_scale), 'resonator', adc_stream=adc_st)
                 qua.wait(self.config['cooldown_clk'], 'resonator')
                 qua.save(n, n_st)
 
@@ -597,18 +645,17 @@ class QMResonatorSpec (QMProgram):
             rand = qua.lib.Random()
 
             with qua.for_(n, 0, n < self.params['Navg'], n + 1):
+                qua.save(n, n_st)
                 with qua.for_(*from_array(f, freqs)):
                     qua.update_frequency('resonator', f)
                     qua.wait(self.config['cooldown_clk'], 'resonator')
                     # randomize demod error
                     qua.wait(rand.rand_int(50)+4, 'resonator')
-                    qua.measure('readout'*qua.amp(amp_scale), 'resonator', None,
-                                qua.dual_demod.full(
-                                    'cos', 'out1', 'sin', 'out2', I),
+                    qua.measure('readout'*qua.amp(amp_scale), 'resonator',
+                                qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
                                 qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
                     qua.save(I, I_st)
                     qua.save(Q, Q_st)
-                qua.save(n, n_st)
 
             with qua.stream_processing():
                 n_st.save('iteration')
@@ -4552,7 +4599,7 @@ class QMHahn (QMRamseyChevronRepeat):
             rand = qua.lib.Random()
 
             qua.update_frequency('resonator', self.config['resonatorIF'])
-            qua.update_frequency('qubit2', self.config['qubitIF'])
+            # qua.update_frequency('qubit2', self.config['qubitIF'])
             with qua.for_(m, 0, m < self.params['Nrep'], m + 1):
                 qua.save(m, t_st)
                 with qua.for_(n, 0, n < self.params['Navg'], n + 1):
@@ -4593,9 +4640,9 @@ class QMHahn (QMRamseyChevronRepeat):
                                 # qubit pulses
                                 qua.wait(12, 'qubit')
                                 baked_driveA[i].run()
-                                qua.wait( t4, 'qubit')
+                                qua.wait(t4, 'qubit')
                                 baked_driveC[i].run()
-                                qua.wait( t4, 'qubit')
+                                qua.wait(t4, 'qubit')
                                 baked_driveB.run()
                                 # readout
                                 qua.wait(t4, 'resonator')

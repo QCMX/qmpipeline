@@ -6,7 +6,7 @@ import numpy as np
 # Use as Zcorr = Z * np.exp(1j * freqs * config.PHASE_CORR).
 # Alors, should be 2*pi*time_of_flight = 1.70e-6 (roughly the same),
 # except for additional phase slope from microwave environment.
-PHASE_CORR = 1.72066e-06 #1.6239384827049928e-06
+PHASE_CORR = 1.48549e-06 #1.6239384827049928e-06
 
 # Note:
 # OPX outputs have 16bits, ie. 1V/2**16 =  15uV resolution
@@ -26,16 +26,16 @@ PHASE_CORR = 1.72066e-06 #1.6239384827049928e-06
 # Octave parameters
 resonator_output_gain = -20 # Octave RF1, range -20 to +20dB
 resonator_input_gain  = +10 # OPX IN, range -12 to +20dB
-qubit_output_gain     = -10 # Octave RF2, range -20 to +20dB
+qubit_output_gain     = 0#-10 # Octave RF2, range -20 to +20dB
 # Qubit output gain is limited by 2*drive LO and LO + IF also going through
 # the cavity and saturating the readout.
 
 # ADC offset in Volts
-adcoffset = np.array([0.057299890319824215 , 0.07062872677001952])
+adcoffset = np.array([0.033622676953125 , 0.040065537658691405])
 
 ## Frequencies
-resonatorLO = 5.010e9
-resonatorIF = 0.20146e9
+resonatorLO = 5.01e9
+resonatorIF = 0.202e9
 # 20ns readout -> 200MHz IF
 # 50ns readout -> 100MHz IF
 
@@ -53,7 +53,7 @@ const_len = 10000
 const_amp = 0.316
 
 readout_len = 20000 # ns
-readout_amp = 0.001# 0.00316 #0.0056
+readout_amp = 0.001 # 0.00316 #0.0056
 #readout_amp = 0.0316 #0.0056
 
 short_readout_len = 680 # 680 # 340 # ns
@@ -78,24 +78,16 @@ pi_amp = 0.149  # in units of volts
 rotation_angle = (-0/180) * np.pi  # angle in degrees
 
 qmconfig = {
-
-    'version': 1,
-
     'controllers': {
-
         'con1': {
-
             'type': 'opx1',
-
             'analog_outputs': {
-                3: {'offset': 0.0},  # I resonator
-                4: {'offset': 0.0},  # Q resonator
-                7: {'offset': -0.03259},  # I resonator
-                8: {'offset': -0.04925},  # Q resonator
+                3: {'offset': 0.0},  # I qubit
+                4: {'offset': 0.0},  # Q qubit
+                7: {'offset': 0.0},  # I resonator
+                8: {'offset': 0.0},  # Q resonator
             },
-
             'digital_outputs': {},
-
             'analog_inputs': {
                 # Gain range -12 to +20dB
                 1: {'offset': adcoffset[0], 'gain_db': resonator_input_gain},  # I from down conversion
@@ -104,15 +96,45 @@ qmconfig = {
         },
     },
 
+    'octaves': {
+        'octave1': {
+            'connectivity': 'con1',
+            'RF_outputs': {
+                2: {
+                    'LO_frequency': resonatorLO,
+                    'LO_source': 'internal',
+                    'gain': resonator_output_gain,
+                    'output_mode': 'always_on',
+                    # input_attenuators: if ON have -10dB input attenuation
+                    # on I and Q before entering IQ mixers
+                    'input_attenuators': 'OFF',
+                },
+                4: {
+                    'LO_frequency': qubitLO,
+                    'LO_source': 'internal',
+                    'gain': qubit_output_gain,
+                    'output_mode': 'always_on',
+                    # input_attenuators: if ON have -10dB input attenuation
+                    # on I and Q before entering IQ mixers
+                    'input_attenuators': 'OFF',
+                },
+            },
+            'RF_inputs': {
+                2: {
+                    'RF_source': 'RF_in',
+                    'LO_frequency': resonatorLO,
+                    'LO_source': 'internal',
+                    'IF_mode_I': 'direct',
+                    'IF_mode_Q': 'direct',
+                },
+            },
+        },
+    },
+
     'elements': {
 
         'qubit': {
-            'mixInputs': {
-                'I': ('con1', 3),
-                'Q': ('con1', 4),
-                'lo_frequency': qubitLO,
-                'mixer': 'octave_octave1_2',
-            },
+            'RF_inputs': {'port': ('octave1', 4)},
             'intermediate_frequency': qubitIF,
             'operations': {
                 'const': 'const_pulse',
@@ -121,14 +143,10 @@ qmconfig = {
         },
 
         # second qubit on same OPX & octave output to multiplex pulses
-        # eg. for three-tone spectroscopy
+        # eg. for three-tone spectroscopy or anharmonicity measurement.
+        # Since LO settings are in 'octaves'-section, always same as 'qubit'.
         'qubit2': {
-            'mixInputs': {
-                'I': ('con1', 3),
-                'Q': ('con1', 4),
-                'lo_frequency': qubitLO,
-                'mixer': 'octave_octave1_2',
-            },
+            'RF_inputs': {'port': ('octave1', 4)},
             'intermediate_frequency': qubitIF,
             'operations': {
                 'const': 'const_pulse',
@@ -137,12 +155,8 @@ qmconfig = {
         },
 
         'resonator': {
-            'mixInputs': {
-                'I': ('con1', 7),
-                'Q': ('con1', 8),
-                'lo_frequency': resonatorLO,
-                'mixer': 'octave_octave1_4'
-            },
+            'RF_inputs': {'port': ('octave1', 2)},
+            'RF_outputs': {'port': ('octave1', 2)},
             'intermediate_frequency': resonatorIF,
             'operations': {
                 'const': 'const_pulse',
@@ -293,15 +307,14 @@ qmconfig = {
     },
 
     'mixers': {
-        "octave_octave1_4": [
+        "octave_octave1_2": [
             {
                 "intermediate_frequency": resonatorIF,
                 "lo_frequency": resonatorLO,
-                "correction": (1.0536929927766323, 0.18822958320379257, 0.18970587104558945, 1.045493170619011),
+                "correction": (1, 0, 0, 1),
             },
         ],
-
-        "octave_octave1_2": [
+        "octave_octave1_4": [
             {
                 "intermediate_frequency": qubitIF,
                 "lo_frequency": qubitLO,

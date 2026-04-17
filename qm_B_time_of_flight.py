@@ -1,15 +1,22 @@
 
 import time
+import importlib
 import numpy as np
 import matplotlib.pyplot as plt
-import importlib
-import qm.qua as qua
-from helpers import data_path, mpl_pause
 
-import configuration_novna as config
+import qm.qua as qua
+from instruments.helpers import data_path, mpl_pause
+
+import configuration_pipeline as config
 import qminit
 
 qmm = qminit.connect()
+
+#%%
+
+importlib.reload(config)
+qm = qmm.open_qm(config.qmconfig)
+qm.calibrate_element('resonator')
 
 #%%
 # Config depends on experiment cabling
@@ -17,7 +24,7 @@ qmm = qminit.connect()
 # Octave config is persistent even when opening new qm
 
 importlib.reload(config)
-importlib.reload(qminit)
+qmm.validate_qua_config(config.qmconfig)
 
 filename = '{datetime}_qm_time_of_flight'
 fpath = data_path(filename, datesuffix='_qm')
@@ -33,10 +40,8 @@ with qua.program() as tof_cal:
     #update_frequency('resonator', 100e6)
 
     with qua.for_(n, 0, n < Navg, n + 1):
-        qua.reset_phase('resonator') # reset the phase of the next played pulse
-        #qua.play('preload', 'resonator')
-        #qua.play('saturation', 'qubit')
-        qua.measure('readout', 'resonator', adc_st)
+        qua.reset_if_phase('resonator') # reset the phase of the next played pulse
+        qua.measure('readout', 'resonator', adc_stream=adc_st)
         qua.wait(config.cooldown_clk, 'resonator')  # wait for photons in resonator to decay
         qua.save(n, n_st)
 
@@ -48,7 +53,6 @@ with qua.program() as tof_cal:
         # Will save only last run:
         adc_st.input1().save('adc1_single_run')
         adc_st.input2().save('adc2_single_run')
-
 
 # #%%
 
@@ -73,15 +77,13 @@ if simulate:
     simulate_config = SimulationConfig(
         duration=10000,
         simulation_interface=LoopbackInterface(([('con1', 1, 'con1', 1)])))
-    job = qmm.simulate(config, tof_cal, simulate_config)  # do simulation with qmm
+    job = qmm.simulate(config.qmconfig, tof_cal, simulate_config)  # do simulation with qmm
     job.get_simulated_samples().con1.plot()  # visualize played pulses
 else:
     qm = qmm.open_qm(config.qmconfig)
-    qminit.octave_setup_resonator(qm, config)
     tstart = time.time()
     try:
-        
-        job = qm.execute(tof_cal)  # execute QUA program
+        job = qm.execute(tof_cal)
         res_handles = job.result_handles
         iteration_handle = res_handles.get('iteration')
         while res_handles.is_processing():
@@ -106,7 +108,7 @@ else:
         adc1_single_run=adc1_single_run, adc2_single_run=adc2_single_run,
         config=config.meta)
 
-    fig, axs = plt.subplots(nrows=2, sharex=True)
+    fig, axs = plt.subplots(nrows=2, sharex=True, layout='constrained')
     axs[0].set_title('Single run (Check ADCs saturation: |ADC|<2048)', fontsize=10)
     axs[0].plot(adc1_single_run, label='I')
     axs[0].plot(adc2_single_run, label='Q')
@@ -118,6 +120,11 @@ else:
     axs[1].plot(adc2)
     axs[1].set_ylabel('ADC units')
     axs[-1].set_xlabel('sample (ns)')
+
+    for ax in axs:
+        ax2 = ax.secondary_yaxis('right', functions=(lambda adc: adc/2**12, lambda volts: volts*1**12))
+        ax2.set_ylabel('Volts')
+
     readoutpower = 10*np.log10(config.readout_amp**2 * 10) # V to dBm
     fig.suptitle(
         f"LO={config.resonatorLO/1e9:.5f}GHz   IF={config.resonatorIF/1e6:.3f}MHz"
@@ -125,7 +132,6 @@ else:
         f"\n{config.readout_len}ns readout at {readoutpower:.1f}dBm{config.resonator_output_gain:+.1f}dB"
         f",   {config.resonator_input_gain:+.1f}dB input gain"
         f"\n{config.qmconfig['elements']['resonator']['smearing']}ns smearing", fontsize=10)
-    fig.tight_layout()
     fig.savefig(fpath+'.png')
 
     # np.savez('time_of_flight_single', adc1=adc1_single_run, adc2=adc2_single_run, config=config)

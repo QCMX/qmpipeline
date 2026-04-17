@@ -32,10 +32,10 @@ try:
 except:
     Vgate = np.nan
 
-Navg = 500
+Navg = 5000
 
-f_min = 202e6 # 102e6
-f_max = 220e6 # 112e6
+f_min = 224e6 # 102e6
+f_max = 227e6 # 112e6
 df = 0.1e6
 freqs = np.arange(f_min, f_max + df/2, df)  # + df/2 to add f_max to freqs
 
@@ -71,7 +71,6 @@ with qua.program() as resonator_spec:
         Q_st.buffer(len(freqs)).average().save('Q')
 
 qm = qmm.open_qm(config.qmconfig)
-qminit.octave_setup_resonator(qm, config)
 job = qm.execute(resonator_spec)
 
 res_handles = job.result_handles
@@ -151,8 +150,7 @@ Inonsat = I
 Qnonsat = Q
 Zrawnonsat = Zraw
 
-def lorentzian(f, f0, width, a, tau0):
-    tau = 0
+def lorentzian(f, f0, width, a, tau0, tau):
     L = (width/2) / ((width/2) + 1j*(f - f0))
     return (a * np.exp(1j*(tau0 + tau*(f-f0)/1e9)) * L).view(float)
 
@@ -162,7 +160,7 @@ from uncertainties import ufloat
 absZ = np.abs(Zcorr)
 popt, pcov = curve_fit(
     lorentzian, freqs/1e6, Zcorr.view(float),
-    p0=[freqs[np.argmax(absZ)]/1e6, 0.7, np.mean(absZ), np.mean(np.unwrap(np.angle(Zcorr)))])
+    p0=[freqs[np.argmax(absZ)]/1e6, 0.7, np.mean(absZ), np.mean(np.unwrap(np.angle(Zcorr))), 0])
 res = [ufloat(opt, err) for opt, err in zip(popt, np.sqrt(np.diag(pcov)))]
 for r, name in zip(res, ["f0", "width", "a", "tau0", "tau"]):
     print(f"  {name:6s} {r}")
