@@ -298,7 +298,10 @@ class QMProgram (object):
         self._init_octave(qm)
 
         job = self.last_job = qm.execute(self.qmprog)
-        resulthandles = job.result_handles
+        # Legacy handler iterate_results() seems to be better behaved.
+        # Direct access using result_handles[key] seems to fail sometimes
+        # for unknown reason.
+        fetchers = {k: v for k, v in job.result_handles.iterate_results()}
         tstart = self.last_tstart = time.time()
 
         if isinstance(plot, bool) and plot == True:
@@ -312,16 +315,16 @@ class QMProgram (object):
             if isinstance(plot, bool):
                 fig.show()
 
-        hasiter = 'iteration' in resulthandles._all_results
+        iterfetcher = fetchers['iteration'] if 'iteration' in fetchers else None
         Niter = self.params.get('Niter', self.params.get('Navg', np.nan))
         try:
-            while resulthandles.is_processing():
-                if hasiter and printn:
-                    iteration = resulthandles.iteration.fetch_all() or 1
+            while job.result_handles.is_processing():
+                if iterfetcher is not None and printn:
+                    iteration = iterfetcher.fetch_all() if iterfetcher.count_so_far() else 1
                     print(
                         f"iteration={iteration}, remaining: {(Niter-iteration) * (time.time()-tstart)/iteration:.0f}s")
                 if self.ax:
-                    self._update_liveplot(self.ax, resulthandles)
+                    self._update_liveplot(self.ax, fetchers)
                 mpl_pause(pause)
         except Exception as e:
             print("Halting QuantumMachine job due to Exception")
@@ -332,13 +335,13 @@ class QMProgram (object):
             job.halt() # continue processing results
 
         trun = self.last_trun = time.time() - tstart
-        resulthandles.wait_for_all_values()
+        job.result_handles.wait_for_all_values()
         print(f"Execution time: {trun:.1f}s, exit status: {job.status}")
         print(job.execution_report())
 
         if self.ax:
-            self._update_liveplot(self.ax, resulthandles)
-        result = self._retrieve_results(resulthandles)
+            self._update_liveplot(self.ax, fetchers)
+        result = self._retrieve_results(fetchers)
         return result
 
     def _init_octave(self, qm):
@@ -367,18 +370,26 @@ class QMProgram (object):
         Reworks named fields of streams so that res['I'] are the values and
         res['I_timestamps'] are the associated timestamps if available.
 
-        Magically combines I and Q into complex Z.
-
+        Magically combines I and Q into complex Z, if present.
         Values of results may be None if the streams have not yet produced
-        any values. A ResultUnavailableError is raised when no job has been
-        run previously.
+        any values.
+
+        `resulthandles` can be job.result_handles or a dictionaty version of it.
+        If zero, uses results from last job.
+
+        A ResultUnavailableError is raised when no job has been run previously
+        and no `resulthandles` is supplied.
         """
         if resulthandles is None:
             if hasattr(self, 'last_job'):
                 resulthandles = self.last_job.result_handles
             else:
                 raise ResultUnavailableError("No results cached yet.")
-        fetched = {k: (f.fetch_all() if len(f) else None) for k, f in resulthandles._all_results.items()}
+        if type(resulthandles) is not dict:
+            resulthandles = {k: v for k, v in resulthandles.iterate_results()}
+        fetched = {
+            k: resulthandles[k].fetch_all() if resulthandles[k] else None
+            for k in resulthandles}
         # Rework named fields
         res = {k: v for k, v in fetched.items() if v is None or v.dtype.names is None}
         res |= {k: v['value'] for k, v in fetched.items() if v is not None and v.dtype.names is not None and 'value' in v.dtype.names}
