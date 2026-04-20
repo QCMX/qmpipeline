@@ -4513,8 +4513,302 @@ class QMRamseyAnharmonicity (QMRamseyChevronRepeat):
         return prog
 
 
-class QMHahn (QMRamseyChevronRepeat):
+class QMHahnEcho (QMProgram):
+    """Hahn echo sequence."""
+
+    def __init__(
+            self, qmm, config, Navg, max_delay_ns,
+            drive_len_ns, sigma_ns=None, readout_delay_ns=None):
+        super().__init__(qmm, config)
+        if sigma_ns is None:
+            sigma_ns = drive_len_ns / 4
+        if readout_delay_ns is None:
+            readout_delay_ns = int(np.ceil(drive_len_ns / 2 / 4)*4)
+        self.params = {
+            'Navg': Navg,
+            'drive_len_ns': drive_len_ns,
+            'sigma_ns': sigma_ns,
+            'max_delay_ns': max_delay_ns,
+            'readout_delay_ns': readout_delay_ns,
+            'delay_ns': np.arange(0, 2*max_delay_ns, 2)}
+
+    def _make_program(self):
+        read_amp_scale = self.config['short_readout_amp'] / \
+            self.config['qmconfig']['waveforms']['short_readout_wf']['sample']
+
+        readoutdelay = self.params['readout_delay_ns']
+        assert readoutdelay % 4 == 0
+
+        maxdelay = self.params['max_delay_ns']
+        assert maxdelay % 4 == 0
+
+        pulseamp = self.config['pi_amp'] / 2
+        sigma = self.params['sigma_ns']
+        drivelen = tg = self.params['drive_len_ns']
+        assert drivelen % 8 == 0
+
+        t = np.arange(0, drivelen, 1)
+        pulse = pulseamp * (np.exp(-(t-(tg-1)/2)**2 / (2*sigma**2)) - np.exp(-(tg-1)**2/(8*sigma**2))) / (1-np.exp(-(tg-1)**2/(8*sigma**2)))
+
+        ## Waveforms for long wait case:
+        # length of first drive wf, right aligned,
+        # including variable wait (up to 2*4ns),
+        # min wf length is 16 samples and multiple of 4ns
+        driveAlen = max(16, drivelen+8)
+        # length of last drive wf, right aligned
+        driveBlen = max(16, drivelen+4)
+        # length of the middle pi pulse drive, right aligned
+        # including variable wait (up to 4ns)
+        driveClen = max(16, drivelen+4)
+        # wait included in driveA after Gaussian center
+        waitA = drivelen//2
+        # wait included in driveB before Gaussian center
+        waitB = driveBlen - drivelen//2
+        assert (waitA+waitB) % 4 == 0 # for maxwaitcycles later
+        # Number of cycles to wait before readout,
+        # this is the reason drive_len_ns needs to be multiple of 8
+        longwfminreadoutcycles = (driveAlen+driveClen+driveBlen-drivelen//2+readoutdelay)//4
+
+        # Remember: baking modifies the qmconfig but every instance uses its own deep-copy.
+        # Initial pi/2 pulse driveA, right aligned with 0,2,4,6ns wait
+        baked_driveA = []
+        for l in range(0, 4):
+            with baking(self.config['qmconfig'], padding_method='none') as bake:
+                wf = np.zeros(driveAlen)
+                wf[wf.size-drivelen-l*2 : wf.size-l*2] = pulse
+                bake.add_op('driveA_%d'%l, 'qubit', [wf, [0]*driveAlen])
+                bake.play('driveA_%d'%l, 'qubit')
+            baked_driveA.append(bake)
+        # middle pi pulse, right aligned with 0,1,2,3ns wait
+        baked_driveC = []
+        for l in range(0, 4):
+            with baking(self.config['qmconfig'], padding_method='none') as bake:
+                wf = np.zeros(driveClen)
+                wf[wf.size-drivelen-l : wf.size-l] = pulse * 2
+                bake.add_op('driveC_%d'%l, 'qubit', [wf, [0]*driveClen])
+                bake.play('driveC_%d'%l, 'qubit')
+            baked_driveC.append(bake)
+        # end pi/2 pulse driveB, right aligned
+        with baking(self.config['qmconfig'], padding_method='none') as baked_driveB:
+            wf = np.zeros(driveBlen)
+            wf[-drivelen:] = pulse
+            baked_driveB.add_op('driveB', 'qubit', [wf, [0]*driveBlen])
+            baked_driveB.play('driveB', 'qubit')
+
+        ## Waveform in case of short wait case:
+        # two pi/2 pulses (A&B), 1 pi pulse (C), 2*16ns due to minimal wait time
+        shortwflen = driveAlen + driveBlen + driveClen + 2*16
+        # Second pulse center at
+        shortwfend = shortwflen - drivelen//2
+        # max cycles to wait in qua.wait, two times
+        # This works because waitB=waitC. If driveClen != driveBlen, then this is broken.
+        maxwaitcycles = (maxdelay-waitB-waitA) // 4
+
+        ## Waveforms for short wait case, all pulses baked into one wf.
+        baked_driveshort = []
+        for l in range(0, waitA+waitB+16):
+            with baking(self.config['qmconfig'], padding_method='none') as bake:
+                wf = np.zeros(shortwflen)
+                wf[shortwflen-drivelen-2*l:shortwflen-2*l] += pulse
+                wf[shortwflen-drivelen-l:shortwflen-l] += pulse*2
+                wf[-drivelen:] += pulse
+                bake.add_op('driveshort_%d'%l, 'qubit', [wf, [0]*shortwflen])
+                bake.play('driveshort_%d'%l, 'qubit')
+            baked_driveshort.append(bake)
+
+        print('sigma', sigma)
+        print('drivelen', drivelen)
+        print('driveAlen', driveAlen)
+        print('driveClen', driveClen, '= driveBlen', driveBlen)
+        print('waitA', waitA)
+        print('waitB', waitB)
+        print('longwfminreadoutcycles', longwfminreadoutcycles)
+        print('shortwflen', shortwflen)
+        print('shortwfend', shortwfend)
+        print('maxwaitcycles', maxwaitcycles)
+
+        with qua.program() as prog:
+            n = qua.declare(int)
+            t4 = qua.declare(int)
+            I = qua.declare(qua.fixed)
+            Q = qua.declare(qua.fixed)
+            n_st = qua.declare_stream()
+            I_st, Q_st = qua.declare_stream(), qua.declare_stream()
+            Ig_st, Qg_st = qua.declare_stream(), qua.declare_stream()
+            rand = qua.lib.Random()
+
+            qua.update_frequency('resonator', self.config['resonatorIF'])
+            qua.update_frequency('qubit', self.config['qubitIF'])
+            with qua.for_(n, 0, n < self.params['Navg'], n + 1):
+                qua.save(n, n_st)
+
+                # Ground state reference, no drive
+                qua.align()
+                qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator',
+                    qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
+                    qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
+                qua.save(I, Ig_st)
+                qua.save(Q, Qg_st)
+                qua.wait(self.config['cooldown_clk'], 'resonator')
+                qua.wait(rand.rand_int(50)+4, 'resonator')
+
+                # short wait case
+                for j in range(waitA+waitB+16):
+                    qua.align()
+                    qua.wait(12, 'qubit')
+                    baked_driveshort[j].run()
+                    qua.wait(12+shortwfend//4+readoutdelay//4, 'resonator')
+                    qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator',
+                        qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
+                        qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
+                    qua.save(I, I_st)
+                    qua.save(Q, Q_st)
+                    qua.wait(self.config['cooldown_clk'], 'resonator')
+                    qua.wait(rand.rand_int(50)+4, 'resonator')
+
+                # long wait case
+                with qua.for_(t4, 4, t4 < maxwaitcycles, t4 + 1):
+                    for i in range(4):
+                        qua.align()
+                        # qubit pulses
+                        qua.wait(12, 'qubit')
+                        baked_driveA[i].run()
+                        qua.wait(t4, 'qubit')
+                        baked_driveC[i].run()
+                        qua.wait(t4, 'qubit')
+                        baked_driveB.run()
+                        # readout
+                        qua.wait(t4, 'resonator')
+                        qua.wait(12+longwfminreadoutcycles, 'resonator')
+                        qua.wait(t4, 'resonator')
+                        qua.measure('short_readout'*qua.amp(read_amp_scale), 'resonator',
+                            qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
+                            qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
+                        qua.save(I, I_st)
+                        qua.save(Q, Q_st)
+                        qua.wait(self.config['cooldown_clk'], 'resonator')
+                        qua.wait(rand.rand_int(50)+4, 'resonator')
+
+            with qua.stream_processing():
+                n_st.save('iteration')
+                I_st.buffer(maxdelay).average().save('I')
+                Q_st.buffer(maxdelay).average().save('Q')
+                Ig_st.average().save('Ig')
+                Qg_st.average().save('Qg')
+
+        self.qmprog = prog
+        return prog
+
+    def _retrieve_results(self, resulthandles=None):
+        """Also merges Ig and Qg into Zg."""
+        res = super()._retrieve_results(resulthandles)
+        if res['Ig'] is not None and res['Qg'] is not None:
+            try:
+                res['Zg'] = res['Ig'] + 1j * res['Qg']
+            except ValueError:
+                res['Zg'] = None
+        return res
+
+    def _figtitle(self, Niter):
+        readoutpower = opx_amp2pow(self.config['short_readout_amp'])
+        drivepower = opx_amp2pow(self.config['pi_amp']/2)
+        return (
+            f"{self.__class__.__name__}, repetitions\n"
+            f"Niter {Niter:.2e}, Navg {self.params['Navg']:.1e}\n"
+            f"resonator {self.config['resonatorLO']/1e9:.3f}GHz{self.config['resonatorIF']/1e6:+.3f}MHz\n"
+            f"qubit {self.config['qubitLO']/1e9:.3f}GHz{self.config['qubitIF']/1e6:+.0f}MHz\n"
+            f"{self.config['short_readout_len']:.0f}ns readout at {readoutpower:.1f}dBm{self.config['resonator_output_gain']:+.1f}dB\n"
+            f"{self.params['drive_len_ns']:.0f}ns Gauss drive at {drivepower:.1f}dBm{self.config['qubit_output_gain']:+.1f}dB")
+
+    def _initialize_liveplot(self, ax):
+        delays = self.params['delay_ns']
+        self.line, = ax.plot(delays, np.full(len(delays), np.nan))
+        ax.set_ylabel("|S - S0|")
+        ax.set_xlabel("delay / ns")
+        ax.set_title(self._figtitle(self.params['Navg']), fontsize=8)
+        self.ax = ax
+
+    def _update_liveplot(self, ax, resulthandles):
+        res = self._retrieve_results(resulthandles)
+        if res['Z'] is None or res['Zg'] is None:
+            return
+        self.line.set_ydata(np.abs(res['Z'] - res['Zg']))
+        ax.relim(), ax.autoscale(), ax.autoscale_view()
+        ax.set_title(self._figtitle((res['iteration'] or 0)+1), fontsize=8)
+
+    def check_timing(self, duration_cycles=20000, plot=True):
+        """Simulate program and check alignment of drive and readout alignment.
+        Raises PipelineException if the alignment is not constant for all pulses.
+        Returns the alignment timing in ns.
+
+        Analog output port numbers are hardcoded! TODO
+        """
+        if not hasattr(self, 'qmprog'):
+            self._make_program()
+        simulate_config = SimulationConfig(duration=duration_cycles)
+        job = self.qmm.simulate(self.config['qmconfig'], self.qmprog, simulate_config)
+
+        if plot:
+            plt.figure()
+            job.get_simulated_samples().con1.plot()
+
+        # figure out analog outputs based on RF ports in config
+        # assuming standard connectivity, ie octave RF1 is OPX lines 1 and 2
+        driveport = self.config['qmconfig']['elements']['qubit']['RF_inputs']['port'][1]
+        readport = self.config['qmconfig']['elements']['resonator']['RF_inputs']['port'][1]
+        driveI, driveQ = str((driveport-1)*2+1), str((driveport-1)*2+2)
+        readI,   readQ = str(( readport-1)*2+1), str(( readport-1)*2+2)
+        print("OPX drive lines I,Q:", driveI, driveQ)
+        print("OPX  read lines I,Q:", readI, readQ)
+
+        analog = job.get_simulated_samples().con1.analog
+        drive = (analog[driveI] - analog[driveI][0]) + 1j * (analog[driveQ] - analog[driveQ][0])
+        read =  (analog[ readI] - analog[ readI][0]) + 1j * (analog[ readQ] - analog[ readQ][0])
+
+        # Time of first non-zero drive samples
+        drivestart = np.nonzero(drive)[0][1:][np.diff(np.nonzero(drive)[0]) > 1]
+        # Time of last non-zero drive samples
+        drivestop = np.nonzero(drive)[0][:-1][np.diff(np.nonzero(drive)[0]) > 1]
+        # start of readout pulses, excluding first one
+        readstart = np.nonzero(read)[0][1:][np.diff(np.nonzero(read)[0]) > 1]
+        if plot:
+            plt.scatter(drivestart, [0]*drivestart.size, label="drive: first non-zero sample")
+            plt.scatter(drivestop, [0]*drivestop.size, label="drive: last non-zero sample")
+            plt.scatter(readstart, [0]*readstart.size, label="readout: first non-zero sample")
+
+        # Drive pulse lengths
+        # Asserts pulses shorter than 100ns
+        l = min(drivestart.size, drivestop.size)
+        dlen = drivestop[1:l]-drivestart[:l-1]+1
+        print("Drive pulse length (non-zero samples), excluding first pulse")
+        print(repr(dlen[dlen<100]))
+
+        # Drive pulse distances and distance between shots
+        ddist = np.diff(drivestart)
+        print("Drive pulse distance (first non-zero to first non-zero sample)")
+        print(repr(ddist))
+
+        # Distance from last pulse to readout
+        # Asserts drive sequences separated by at least 200ns and each wait shorter than 200ns.
+        # readstart not including first readout pulse, but first shot also has no drive (ground state measurement).
+        # drive sequence end
+        driveseqstopidx = np.argwhere(np.diff(drivestop) > 200)[:,0]
+        driveseqstop = drivestop[driveseqstopidx]
+        l = min(driveseqstop.size, readstart.size)
+        readdelay = readstart[:l] - driveseqstop[:l]
+        print("Readout delay (first non-zero readout sample - last non-zero drive sample), excluding first sequence (ground state measurement)")
+        print(readdelay)
+        if plot:
+            plt.scatter(driveseqstop, [0]*driveseqstop.size, label="drive sequence: last non-zero sample")
+            plt.legend() # update legend
+
+        return drivestart, drivestop, readstart
+
+
+class QMHahnEchoChevron (QMRamseyChevronRepeat):
     """Hahn sequence at varying IF after excitation pulse on qubitIF.
+
+    TODO: should not inherit from QMRamseyChevronRepeat
 
     Parameters
     ----------
@@ -4787,62 +5081,6 @@ class QMHahn (QMRamseyChevronRepeat):
                                                - np.mean(res['Zg'][:,np.argmin(np.abs(self.params['qubitIFs']-self.config['qubitIF'])) ], axis=0))  
         self.line.set_ydata(HahnDecay)
         self.ax2.relim(), self.ax2.autoscale(), self.ax2.autoscale_view()
-
-    def check_timing(self, duration_cycles=20000, plot=True):
-        """Simulate program and check alignment of drive and readout alignment.
-        Raises PipelineException if the alignment is not constant for all pulses.
-        Returns the alignment timing in ns.
-
-        Analog output port numbers are hardcoded! TODO
-        """
-        if not hasattr(self, 'qmprog'):
-            self._make_program()
-        simulate_config = SimulationConfig(duration=duration_cycles)
-        job = self.qmm.simulate(self.config['qmconfig'], self.qmprog, simulate_config)
-
-        if plot:
-            plt.figure()
-            job.get_simulated_samples().con1.plot()
-
-        analog = job.get_simulated_samples().con1.analog
-        drive = (analog['3'] - analog['3'][0]) + 1j * (analog['4'] - analog['4'][0])
-        read = (analog['7'] - analog['7'][0]) + 1j * (analog['8'] - analog['8'][0])
-        # Time of first non-zero drive samples
-        drivestart = np.nonzero(drive)[0][1:][np.diff(np.nonzero(drive)[0]) > 1]
-        # Time of last non-zero drive samples
-        drivestop = np.nonzero(drive)[0][:-1][np.diff(np.nonzero(drive)[0]) > 1]
-        # start of readout pulses, excluding first one
-        readstart = np.nonzero(read)[0][1:][np.diff(np.nonzero(read)[0]) > 1]
-        if plot:
-            plt.scatter(drivestart, [0]*drivestart.size, label="drive: first non-zero sample")
-            plt.scatter(drivestop, [0]*drivestop.size, label="drive: last non-zero sample")
-            plt.scatter(readstart, [0]*readstart.size, label="readout: first non-zero sample")
-
-        # Drive pulse lengths
-        # Asserts pulses shorter than 100ns
-        l = min(drivestart.size, drivestop.size)
-        dlen = drivestop[1:l]-drivestart[:l-1]+1
-        print("Drive pulse length (non-zero samples), excluding first pulse")
-        print(repr(dlen[dlen<100]))
-
-        # Drive pulse distances and distance between shots
-        ddist = np.diff(drivestart)
-        print("Drive pulse distance (first non-zero to first non-zero sample)")
-        print(repr(ddist))
-
-        # Distance from last pulse to readout
-        # Asserts drive sequences separated by at least 200ns and each wait shorter than 200ns.
-        # readstart not including first readout pulse, but first shot also has no drive (ground state measurement).
-        # drive sequence end
-        driveseqstopidx = np.argwhere(np.diff(drivestop) > 200)[:,0]
-        driveseqstop = drivestop[driveseqstopidx]
-        l = min(driveseqstop.size, readstart.size)
-        readdelay = readstart[:l] - driveseqstop[:l]
-        print("Readout delay (first non-zero readout sample - last non-zero drive sample), excluding first sequence (ground state measurement)")
-        print(readdelay)
-        if plot:
-            plt.scatter(driveseqstop, [0]*driveseqstop.size, label="drive sequence: last non-zero sample")
-            plt.legend() # update legend
 
 # %%
 
