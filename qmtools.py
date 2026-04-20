@@ -1219,7 +1219,7 @@ class QMNoiseSpectrum (QMProgram):
     def __init__(self, qmm, config, Nsamples, wait_ns=16, fcut_Hz=None):
         super().__init__(qmm, config)
         self.params = {
-            'Nsamples': Nsamples,
+            'Nsamples': Nsamples, 'Niter': Nsamples,
             'wait_ns': wait_ns,
             'fcut_Hz': fcut_Hz}
 
@@ -1294,7 +1294,7 @@ class QMNoiseSpectrum (QMProgram):
         ax.set_xlabel("Frequency / Hz")
         ax.set_ylabel("|FFT S|")
         ax.set_title(
-            f"resonator noise spectrum   {self.params['Nsamples']} samples\n"
+            f"resonator noise spectrum\n{self.params['Nsamples']:.2e} samples\n"
             f"resonator {self.config['resonatorLO']/1e9:.3f}GHz{self.config['resonatorIF']/1e6:+.3f}MHz\n"
             f"{self.config['readout_len']/1e3:.0f}us readout at {readoutpower:.1f}dBm{self.config['resonator_output_gain']:+.1f}dB",
             fontsize=8)
@@ -4231,7 +4231,7 @@ class QMRamseyChevronRepeat_Gaussian (QMRamseyChevronRepeat):
         Raises PipelineException if the alignment is not constant for all pulses.
         Returns the alignment timing in ns.
 
-        Analog output port numbers are hardcoded! TODO
+        Assumes standard OPX to Octave mapping to find OPX analog ports.
         """
         if not hasattr(self, 'qmprog'):
             self._make_program()
@@ -4242,9 +4242,18 @@ class QMRamseyChevronRepeat_Gaussian (QMRamseyChevronRepeat):
             plt.figure()
             job.get_simulated_samples().con1.plot()
 
+        # figure out analog outputs based on RF ports in config
+        # assuming standard connectivity, ie octave RF1 is OPX lines 1 and 2
+        driveport = self.config['qmconfig']['elements']['qubit']['RF_inputs']['port'][1]
+        readport = self.config['qmconfig']['elements']['resonator']['RF_inputs']['port'][1]
+        driveI, driveQ = str((driveport-1)*2+1), str((driveport-1)*2+2)
+        readI,   readQ = str(( readport-1)*2+1), str(( readport-1)*2+2)
+        print("OPX drive lines I,Q:", driveI, driveQ)
+        print("OPX  read lines I,Q:", readI, readQ)
+
         analog = job.get_simulated_samples().con1.analog
-        drive = (analog['3'] - analog['3'][0]) + 1j * (analog['4'] - analog['4'][0])
-        read = (analog['7'] - analog['7'][0]) + 1j * (analog['8'] - analog['8'][0])
+        drive = (analog[driveI] - analog[driveI][0]) + 1j * (analog[driveQ] - analog[driveQ][0])
+        read =  (analog[ readI] - analog[ readI][0]) + 1j * (analog[ readQ] - analog[ readQ][0])
         # Time of first non-zero drive samples
         drivestart = np.nonzero(drive)[0][1:][np.diff(np.nonzero(drive)[0]) > 1]
         # Time of last non-zero drive samples
@@ -4252,9 +4261,10 @@ class QMRamseyChevronRepeat_Gaussian (QMRamseyChevronRepeat):
         # start of readout pulses, excluding first one
         readstart = np.nonzero(read)[0][1:][np.diff(np.nonzero(read)[0]) > 1]
         if plot:
-            plt.scatter(drivestart, [0]*drivestart.size)
-            plt.scatter(drivestop, [0]*drivestop.size)
-            plt.scatter(readstart, [0]*readstart.size)
+            plt.scatter(drivestart, [0]*drivestart.size, label='drive start')
+            plt.scatter(drivestop, [0]*drivestop.size, label='drive stop')
+            plt.scatter(readstart, [0]*readstart.size, label='read start')
+            plt.legend()
 
         # Distance between two drive pulses
         l = min(drivestart.size, drivestop.size)
@@ -4285,7 +4295,7 @@ class QMRamseyChevronRepeat_Gaussian (QMRamseyChevronRepeat):
         # return overlap
 
 
-class QMRamseyAnharmonicity (QMRamseyChevronRepeat):
+class QMRamseyAnharmonicity (QMRamseyChevronRepeat_Gaussian):
     """Ramsey sequence at varying IF after excitation pulse on qubitIF.
 
     Parameters
@@ -4317,7 +4327,8 @@ class QMRamseyAnharmonicity (QMRamseyChevronRepeat):
     def __init__(
             self, qmm, config, Nrep, Navg, qubitIFs,
             max_delay_ns, drive_len_ns, sigma_ns=None, readout_delay_ns=None):
-        super().__init__(qmm, config, Nrep, Navg, qubitIFs, drive_len_ns, max_delay_ns)
+        super().__init__(qmm, config, Nrep, Navg, qubitIFs,
+                         max_delay_ns, drive_len_ns, sigma_ns, readout_delay_ns)
         if sigma_ns is None:
             sigma_ns = drive_len_ns / 4
         if readout_delay_ns is None:
