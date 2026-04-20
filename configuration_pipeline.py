@@ -26,7 +26,7 @@ PHASE_CORR = 1.48549e-06 #1.6239384827049928e-06
 # Octave parameters
 resonator_output_gain = -20 # Octave RF1, range -20 to +20dB
 resonator_input_gain  = +10 # OPX IN, range -12 to +20dB
-qubit_output_gain     = 0#-10 # Octave RF2, range -20 to +20dB
+qubit_output_gain     = 0 # Octave RF2, range -20 to +20dB
 # Qubit output gain is limited by 2*drive LO and LO + IF also going through
 # the cavity and saturating the readout.
 
@@ -53,10 +53,9 @@ const_len = 10000
 const_amp = 0.316
 
 readout_len = 20000 # ns
-readout_amp = 0.001 # 0.00316 #0.0056
-#readout_amp = 0.0316 #0.0056
+readout_amp = 0.00178
 
-short_readout_len = 680 # 680 # 340 # ns
+short_readout_len = 680 # 340 # ns
 short_readout_amp = 0.316
 
 # Time it takes the pulses to go through the RF chain, including the device.
