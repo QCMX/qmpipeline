@@ -76,7 +76,7 @@ import inspect
 import warnings
 from copy import deepcopy
 from uncertainties import ufloat
-from scipy.optimize import curve_fit
+from scipy.optimize import curve_fit, OptimizeWarning
 from scipy.signal import savgol_filter, find_peaks
 from datetime import datetime
 
@@ -3859,7 +3859,7 @@ class QMRamseyChevronRepeat (QMProgram):
         return (
             f"{self.__class__.__name__}, repetitions\nNiter {Niter:.2e}, Navg {self.params['Navg']:.1e}, Nrep {self.params['Nrep']:.1e}\n"
             f"resonator {self.config['resonatorLO']/1e9:.3f}GHz{self.config['resonatorIF']/1e6:+.3f}MHz\n"
-            f"qubit {self.config['qubitLO']/1e9:.3f}GHz\n"
+            f"qubit LO {self.config['qubitLO']/1e9:.3f}GHz\n"
             f"{self.config['short_readout_len']:.0f}ns readout at {readoutpower:.1f}dBm{self.config['resonator_output_gain']:+.1f}dB\n"
             f"{self.params['drive_len_ns']:.0f}ns square drive at {drivepower:.1f}dBm{self.config['qubit_output_gain']:+.1f}dB")
 
@@ -3878,7 +3878,7 @@ class QMRamseyChevronRepeat (QMProgram):
 
         self.ax2 = ax.twinx()
         x = np.linspace(0, max(delays), self.params['Nrep'])
-        self.line, = self.ax2.plot(x, np.full(self.params['Nrep'], np.nan), color='k', linewidth=2, zorder=100)
+        self.line, = self.ax2.plot(x, np.full(self.params['Nrep'], np.nan), color='k', linewidth=1, zorder=100)
 
     def _update_liveplot(self, ax, resulthandles):
         res = self._retrieve_results(resulthandles)
@@ -3903,6 +3903,73 @@ class QMRamseyChevronRepeat (QMProgram):
         if hasattr(self, 'ax2'):
             self.ax2.remove()
         super().clear_liveplot()
+
+    def fit_chevron(self, resulthandles=None, f01guess=None,
+                    printinfo=True, extraplot=False):
+        res = self._retrieve_results(resulthandles)
+        # average over repetitions
+        S = np.mean(res['Z'], axis=0)
+        # take distance to ground state
+        chevron = np.abs(S - np.mean(res['Zg']))
+
+        ifs = res['qubitIFs']/1e9 # GHz
+        ts = np.arange(S.shape[-1]) # ns
+
+        if f01guess is None:
+            f01guess = res['config']['qubitIF'] / 1e9
+
+        pulsewidth = 2*res['sigma_ns']
+
+        # Fit freq & time in units of GHz & ns
+        def full_ramsey_model(_, T2, f01, amp, phase, ifs=ifs, ts=ts):
+            # detuning, nonzero to avoid division by zero
+            d1 = np.maximum(np.abs(ifs[:,None] - f01), 1e-6)
+            # amplitude envelope
+            A1 = amp * np.exp(-0.5*(2*np.pi * (ifs[:,None]-f01))**2 * (pulsewidth/2)**2)
+            values = (
+                A1 * (1 + np.exp(-ts[None,:]/T2) * np.cos(2*np.pi * d1 * ts[None,:] + phase))
+                )
+            return np.array(values.flat)
+
+        p0 = [np.max(ts)/2, f01guess, # T2, f01
+              np.max(chevron[:,0])/2, 0] # amp, phase
+        try:
+            popt, pcov = curve_fit(full_ramsey_model, ts, np.array(chevron.flat), p0)
+        except (RuntimeError, OptimizeWarning):
+            raise PipelineException("Could not fit Ramsey chevron")
+        perr = np.sqrt(np.diag(pcov))
+        model = full_ramsey_model(None, *popt).reshape(chevron.shape)
+
+        # Format resuls
+        paramnames = ["T2", "f01", "amp", "phase"]
+        fpopt = [ufloat(opt, err) for opt, err in zip(popt, perr)]
+        if printinfo:
+            print("  Fit cosine to Power Rabi data")
+            for r, name in zip(fpopt, paramnames):
+                print(f"    {name:6s} {r}")
+        if extraplot:
+            fig, axs = plt.subplots(ncols=3, sharex=True, sharey=True, layout='constrained')
+            im0 = axs[0].pcolormesh(ts, ifs, chevron, shading='nearest')
+            im1 = axs[1].pcolormesh(ts, ifs, model, shading='nearest')
+            im2 = axs[2].pcolormesh(ts, ifs, (chevron-model), shading='nearest')
+            fig.colorbar(im0, ax=axs[0], label="|S - S0|")
+            fig.colorbar(im1, ax=axs[1], label="|S - S0|")
+            fig.colorbar(im2, ax=axs[2], label="|S - S0|")
+            axs[0].set_title("Data")
+            axs[1].set_title("Model")
+            axs[2].set_title("Residuals")
+            fig.suptitle(
+                "\n".join(f"{name} {r}" for r, name in zip(fpopt, paramnames)),
+                fontsize=8)
+
+        return {
+            'signal': chevron,
+            'p0': p0,
+            'parameter_names': paramnames,
+            'popt': popt,
+            'perr': perr,
+            'model': model
+        }
 
 
 class QMRamseyChevronRepeat_Gaussian (QMRamseyChevronRepeat):
@@ -4154,7 +4221,7 @@ class QMRamseyChevronRepeat_Gaussian (QMRamseyChevronRepeat):
         return (
             f"Ramsey chevrons, repetitions\nNiter {Niter:.2e}, Navg {self.params['Navg']:.1e}, Nrep {self.params['Nrep']:.1e}\n"
             f"resonator {self.config['resonatorLO']/1e9:.3f}GHz{self.config['resonatorIF']/1e6:+.3f}MHz\n"
-            f"qubit {self.config['qubitLO']/1e9:.3f}GHz\n"
+            f"qubit LO {self.config['qubitLO']/1e9:.3f}GHz\n"
             f"{self.config['short_readout_len']:.0f}ns readout at {readoutpower:.1f}dBm{self.config['resonator_output_gain']:+.1f}dB\n"
             f"{self.params['drive_len_ns']:.0f}ns Gauss drive at {drivepower:.1f}dBm{self.config['qubit_output_gain']:+.1f}dB")
 
