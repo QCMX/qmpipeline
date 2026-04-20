@@ -1977,7 +1977,8 @@ class QMReadoutSNR_P1 (QMProgram):
             raise ValueError(
                 "Readout amplitudes cannot be scaled to target voltage because ratio is out of scaling range [-2 to 2].")
 
-        assert self.params['drive_len'] % 4 == 0
+        drive_len = self.params['drive_len']
+        assert drive_len % 4 == 0
         #drive_len_cycles = self.params['drive_len'] // 4
         #readoutwait_cycles = drive_len_cycles - self.config['short_readout_len']//4
         #assert readoutwait_cycles >= 4
@@ -2008,7 +2009,7 @@ class QMReadoutSNR_P1 (QMProgram):
 
                     # drive ON
                     qua.align()
-                    qua.play('saturation'*qua.amp(drive_amp_scale), 'qubit')
+                    qua.play('saturation'*qua.amp(drive_amp_scale), 'qubit', duration=drive_len)
                     # qua.wait(readoutwait_cycles, 'resonator')
                     qua.align()
                     qua.measure(
