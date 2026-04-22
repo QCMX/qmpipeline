@@ -1803,7 +1803,7 @@ class QMQubitSpec_P2 (QMProgram):
 
 class QMReadoutSNR (QMProgram):
     """Uses short readout pulse and saturation pulse.
-    
+
     Need qubitIF to be tuned correctly to drive qubit into mixed state.
 
     Note: 4.28 fixed point numbers have a range of [-8 to 8) with a precision of 2^-28 = 3.7e-9.
@@ -2127,8 +2127,10 @@ class QMReadoutSNR_P1 (QMProgram):
             ax.plot(res['readout_power'], filt, 'k-')
             ax.axhline(lim, color='gray', linestyle='--', linewidth=1)
             ax.plot([res['readout_power'][bestidx]], [filt[bestidx]], '.', color='r')
+        if bestidx == len(filt)-1:
+            raise PipelineException("Find readout power: highest SNR at max power -> unreliable.")
         if filt[bestidx] < lim:
-            raise PipelineException("SNR signal not clear enough to find peak.")
+            raise PipelineException("Find readout power: SNR signal not clear enough to find peak.")
         return self.params['readout_amps'][bestidx], res['readout_power'][bestidx]
 
 class QMHistogramIQ (QMProgram):
@@ -3896,8 +3898,9 @@ class QMRamseyChevronRepeat (QMProgram):
         if res['Z'] is None:
             return
         if 'Zg' in res and res['Zg'] is not None:
-            signal = np.abs(np.mean(res['Z'], axis=0)-np.mean(res['Zg']))
-            self.colorbar.set_label('|Z-Zg|')
+            Zg = np.mean(res['Zg'])
+            signal = np.abs((np.mean(res['Z'], axis=0) - Zg)/Zg)
+            self.colorbar.set_label('|S-Sg|/|Sg|')
         else:
             signal = np.unwrap(np.unwrap(np.angle(np.mean(res['Z'], axis=0)), axis=0))
         self.img.set_array(signal.T)
@@ -3955,7 +3958,7 @@ class QMRamseyChevronRepeat (QMProgram):
         paramnames = ["T2", "f01", "amp", "phase"]
         fpopt = [ufloat(opt, err) for opt, err in zip(popt, perr)]
         if printinfo:
-            print("  Fit cosine to Power Rabi data")
+            print("  Fit Ramsey chevron")
             for r, name in zip(fpopt, paramnames):
                 print(f"    {name:6s} {r}")
         if extraplot:
@@ -4307,6 +4310,9 @@ class QMRamseyChevronRepeat_Gaussian (QMRamseyChevronRepeat):
 
 class QMRamseyAnharmonicity (QMRamseyChevronRepeat_Gaussian):
     """Ramsey sequence at varying IF after excitation pulse on qubitIF.
+
+    Inherits from QMRamseyChevronRepeat_Gaussian because it has the same
+    output data format.
 
     Parameters
     ----------
@@ -4735,7 +4741,7 @@ class QMHahnEcho (QMProgram):
     def _initialize_liveplot(self, ax):
         delays = self.params['delay_ns']
         self.line, = ax.plot(delays, np.full(len(delays), np.nan))
-        ax.set_ylabel("|S - S0|")
+        ax.set_ylabel("|S-S0|/S0")
         ax.set_xlabel("delay / ns")
         ax.set_title(self._figtitle(self.params['Navg']), fontsize=8)
         self.ax = ax
@@ -4744,7 +4750,7 @@ class QMHahnEcho (QMProgram):
         res = self._retrieve_results(resulthandles)
         if res['Z'] is None or res['Zg'] is None:
             return
-        self.line.set_ydata(np.abs(res['Z'] - res['Zg']))
+        self.line.set_ydata(np.abs((res['Z'] - res['Zg'])/res['Zg']))
         ax.relim(), ax.autoscale(), ax.autoscale_view()
         ax.set_title(self._figtitle((res['iteration'] or 0)+1), fontsize=8)
 
@@ -4820,7 +4826,8 @@ class QMHahnEcho (QMProgram):
 class QMHahnEchoChevron (QMRamseyChevronRepeat):
     """Hahn sequence at varying IF after excitation pulse on qubitIF.
 
-    TODO: should not inherit from QMRamseyChevronRepeat
+    TODO: should not inherit from QMRamseyChevronRepeat.
+    It is the case to also combine Ig and Qg to Zg
 
     Parameters
     ----------
@@ -5053,7 +5060,7 @@ class QMHahnEchoChevron (QMRamseyChevronRepeat):
         return (
             f"{self.__class__.__name__}, repetitions\nNiter {Niter:.2e}, Navg {self.params['Navg']:.1e}, Nrep {self.params['Nrep']:.1e}\n"
             f"resonator {self.config['resonatorLO']/1e9:.3f}GHz{self.config['resonatorIF']/1e6:+.3f}MHz\n"
-            f"qubit {self.config['qubitLO']/1e9:.3f}GHz\n"
+            f"qubit LO {self.config['qubitLO']/1e9:.3f}GHz\n"
             f"{self.config['short_readout_len']:.0f}ns readout at {readoutpower:.1f}dBm{self.config['resonator_output_gain']:+.1f}dB\n"
             f"{self.params['drive_len_ns']:.0f}ns Gauss drive at {drivepower:.1f}dBm{self.config['qubit_output_gain']:+.1f}dB")
 
@@ -5086,13 +5093,12 @@ class QMHahnEchoChevron (QMRamseyChevronRepeat):
         self.img.set_array(signal.T)
         self.img.autoscale()
         self.ax.autoscale(), self.ax.autoscale_view()
-        ax.set_title(self._figtitle((res['iteration'] or 0)+1), fontsize=8)
 
-        HahnDecay = np.full(res['Z'].shape[2], np.nan)
-        HahnDecay[:res['Z'].shape[2]] = np.abs(np.mean(res['Z'][:,np.argmin(np.abs(self.params['qubitIFs']-self.config['qubitIF'])), :], axis=0) 
-                                               - np.mean(res['Zg'][:,np.argmin(np.abs(self.params['qubitIFs']-self.config['qubitIF'])) ], axis=0))  
-        self.line.set_ydata(HahnDecay)
+        fqidx = np.argmin(np.abs(self.params['qubitIFs']-self.config['qubitIF']))
+        self.line.set_ydata(signal[fqidx])
         self.ax2.relim(), self.ax2.autoscale(), self.ax2.autoscale_view()
+
+        ax.set_title(self._figtitle((res['iteration'] or 0)+1), fontsize=8)
 
 # %%
 
