@@ -2823,7 +2823,7 @@ class QMPowerRabi (QMProgram):
         """Cosine function with background offset and slope to use for fitting.
         Constrained to be zero at t=0.
         """
-        return a * (1+bkg_slope*amp) * (1 - np.cos(2*np.pi * amp / period) * np.exp(-amp/decay))
+        return a * (1 - np.cos(2*np.pi * amp / period) * np.exp(-amp/decay)) + bkg_slope*amp
 
     def fit_cosine(
             self, result=None, ax=None, period0=0.05, plotp0=False,
@@ -2906,8 +2906,8 @@ class QMPowerRabi (QMProgram):
             0, # bkg slant
         ]
         bounds = (
-            [amps[2]-amps[0], 0, 0, -1/np.max(amps)],
-            [np.max(amps)*4, np.max(signal)*2, np.inf, 3/np.max(amps)])
+            [amps[2]-amps[0], 0, 0, -maxmin/np.max(amps)],
+            [np.max(amps)*4, np.max(signal)*2, np.inf, 3*maxmin/np.max(amps)])
         print(p0)
         print(bounds)
         popt, pcov = curve_fit(
