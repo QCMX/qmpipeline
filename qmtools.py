@@ -402,12 +402,22 @@ class QMProgram (object):
         if 'I' in res and 'Q' in res and 'Z' not in res:
             if res['I'] is not None and res['Q'] is not None:
                 try:
-                    res['Z'] = (res['I'] + 1j * res['Q'])
+                    res['Z'] = res['I'] + 1j * res['Q']
                 except ValueError:
                     # Probably the shapes didnt match yet
                     res['Z'] = None
             else:
                 res['Z'] = None
+        # Magically prepare Zg
+        if 'Ig' in res and 'Qg' in res and 'Zg' not in res:
+            if res['Ig'] is not None and res['Qg'] is not None:
+                try:
+                    res['Zg'] = res['Ig'] + 1j * res['Qg']
+                except ValueError:
+                    # Probably the shapes didnt match yet
+                    res['Zg'] = None
+            else:
+                res['Zg'] = None
         # Also save the time it took to run and start time (UTC timestamps)
         if hasattr(self, 'last_tstart'):
             res['job_starttime'] = self.last_tstart
@@ -1318,9 +1328,9 @@ class QMQubitSpec (QMProgram):
     Assumes saturation pulse longer than readout pulse.
     Readout is centered in saturation pulse time-wise.
     """
-    def __init__(self, qmm, config, Navg, qubitIFs):
+    def __init__(self, qmm, config, Navg, qubitIFs, Ngavg=10):
         super().__init__(qmm, config)
-        self.params = {'qubitIFs': qubitIFs, 'Navg': Navg}
+        self.params = {'qubitIFs': qubitIFs, 'Navg': Navg, 'Ngavg': Ngavg}
 
     def _make_program(self):
         read_amp_scale = self.config['readout_amp'] / \
@@ -1336,17 +1346,26 @@ class QMQubitSpec (QMProgram):
             (self.config['saturation_len'] - self.config['readout_len']) / 2 / 4)  # cycles
 
         with qua.program() as prog:
-            n = qua.declare(int)
+            n, m = qua.declare(int), qua.declare(int)
             f = qua.declare(int)
-            I = qua.declare(qua.fixed)
-            Q = qua.declare(qua.fixed)
-            I_st = qua.declare_stream()
-            Q_st = qua.declare_stream()
+            I, Q = qua.declare(qua.fixed), qua.declare(qua.fixed)
+            I_st, Q_st = qua.declare_stream(), qua.declare_stream()
+            Ig_st, Qg_st = qua.declare_stream(), qua.declare_stream()
             n_st = qua.declare_stream()
             rand = qua.lib.Random()
 
             qua.update_frequency('resonator', self.config['resonatorIF'])
             with qua.for_(n, 0, n < self.params['Navg'], n + 1):
+                with qua.for_(m, 0, m < self.params['Ngavg'], m + 1):
+                    qua.wait(self.config['cooldown_clk'], 'resonator')
+                    # randomize demod error
+                    qua.wait(rand.rand_int(50)+4, 'resonator')
+                    qua.measure('readout'*qua.amp(read_amp_scale), 'resonator',
+                                qua.dual_demod.full('cos', 'out1', 'sin', 'out2', I),
+                                qua.dual_demod.full('minus_sin', 'out1', 'cos', 'out2', Q))
+                    qua.save(I, Ig_st)
+                    qua.save(Q, Qg_st)
+
                 with qua.for_(*from_array(f, freqs)):
                     qua.update_frequency('qubit', f)
                     qua.wait(self.config['cooldown_clk'], 'resonator')
@@ -1366,6 +1385,8 @@ class QMQubitSpec (QMProgram):
                 n_st.save('iteration')
                 I_st.buffer(len(freqs)).average().save('I')
                 Q_st.buffer(len(freqs)).average().save('Q')
+                Ig_st.average().save('Ig')
+                Qg_st.average().save('Qg')
 
         self.qmprog = prog
         return prog
@@ -1385,17 +1406,16 @@ class QMQubitSpec (QMProgram):
             f"{self.config['saturation_len']/1e3:.0f}us drive at {drivepower:.1f}dBm{self.config['qubit_output_gain']:+.1f}dB",
             fontsize=8)
         ax.set_xlabel("drive / GHz")
-        ax.set_ylabel("arg S")
+        ax.set_ylabel("|S - Soff| / |Soff|")
         self.line = line
         self.ax = ax
 
     def _update_liveplot(self, ax, resulthandles):
         res = self._retrieve_results(resulthandles)
-        if res['Z'] is None:
+        if res['Z'] is None or res['Zg'] is None:
             return
-        # self.line.set_ydata(np.abs(res['Z']) /
-        #                     self.config['readout_len'] * 2**12)
-        self.line.set_ydata(np.unwrap(np.angle(res['Z'])))
+        self.line.set_ydata(np.abs((res['Z'] - res['Zg'])/res['Zg']))
+        #self.line.set_ydata(np.unwrap(np.angle(res['Z'])))
         ax.relim(), ax.autoscale(), ax.autoscale_view()
 
     def find_dip(self, window_length=5, ax=None, printinfo=True):
@@ -1408,16 +1428,16 @@ class QMQubitSpec (QMProgram):
         """
         qubitIFs = self.params['qubitIFs']
         res = self._retrieve_results()
-        argZ = np.unwrap(np.angle(res['Z']))
+        dZ = np.abs((res['Z'] - res['Zg'])/res['Zg'])
 
         if window_length < 3:
             warnings.warn(f"Smoothing window {window_length} smaller 3. Skip smoothing.")
-            filt = argZ
+            filt = dZ
         else:
-            filt = savgol_filter(argZ, window_length, polyorder=2)
-        qi = np.argmin(filt)
-        signal = np.abs(filt[qi] - np.median(filt))
-        noise = np.std(np.diff(argZ))/2**0.5
+            filt = savgol_filter(dZ, window_length, polyorder=2)
+        qi = np.argmax(filt)
+        signal = filt[qi] #np.abs(filt[qi] - np.median(filt))
+        noise = np.std(np.diff(dZ))/2**0.5
         if printinfo:
             print("Fine tune qubit IF")
             print(f"    {signal/noise:.1e} SNR: {signal:.2e} signal vs {noise:.2e} noise level")
@@ -1429,7 +1449,7 @@ class QMQubitSpec (QMProgram):
 
         fq = qubitIFs[qi]
         if ax is not None:
-            ax.plot([(fq+self.config['qubitLO'])/1e9], [argZ[qi]], '.', color='r')
+            ax.plot([(fq+self.config['qubitLO'])/1e9], [dZ[qi]], '.', color='r')
         return fq
 
 
@@ -3844,16 +3864,6 @@ class QMRamseyChevronRepeat (QMProgram):
         self.qmprog = prog
         return prog
 
-    def _retrieve_results(self, resulthandles=None):
-        """Also merges Ig and Qg into Zg."""
-        res = super()._retrieve_results(resulthandles)
-        if res['Ig'] is not None and res['Qg'] is not None:
-            try:
-                res['Zg'] = res['Ig'] + 1j * res['Qg']
-            except ValueError:
-                res['Zg'] = None
-        return res
-
     def _figtitle(self, Niter):
         readoutpower = opx_amp2pow(self.config['short_readout_amp'])
         drivepower = opx_amp2pow(self.config['pi_amp']/2)
@@ -4711,16 +4721,6 @@ class QMHahnEcho (QMProgram):
         self.qmprog = prog
         return prog
 
-    def _retrieve_results(self, resulthandles=None):
-        """Also merges Ig and Qg into Zg."""
-        res = super()._retrieve_results(resulthandles)
-        if res['Ig'] is not None and res['Qg'] is not None:
-            try:
-                res['Zg'] = res['Ig'] + 1j * res['Qg']
-            except ValueError:
-                res['Zg'] = None
-        return res
-
     def _figtitle(self, Niter):
         readoutpower = opx_amp2pow(self.config['short_readout_amp'])
         drivepower = opx_amp2pow(self.config['pi_amp']/2)
@@ -5078,8 +5078,8 @@ class QMHahnEchoChevron (QMRamseyChevronRepeat):
         res = self._retrieve_results(resulthandles)
         if res['Z'] is None:
             return
-        if 'Zg' in res:
-            signal = np.abs(np.mean(res['Z'], axis=0)-np.mean(res['Zg']))
+        if res['Zg'] is not None:
+            signal = np.abs(np.mean(res['Z'], axis=0) - np.mean(res['Zg']))
             self.colorbar.set_label('|Z-Zg|')
         else:
             signal = np.unwrap(np.unwrap(np.angle(np.mean(res['Z'], axis=0)), axis=0))
