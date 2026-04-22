@@ -1,0 +1,38 @@
+Provides classes that run common measurement protocols on the
+QuantumMachine OPX + Octave, and standalone scripts for specific tasks.
+
+- `qmtools` Collection of QM protocols.
+- `qmpipeline` Script using protocols for automated qubit characterization.
+- `vgatepipeline` Easier loading and treating fo qmpipeline output.
+- `vgatepipelineplotter` Jupyter widget to look at qmpipeline data.
+- `pipeline_fits` Fit output data from various QM protocols.
+
+See the doc strings, especially module doc strings, for further documentation.
+
+# How to use
+## Requirements and conda env
+This implementation is for use with a single OPX1 and one Octave.
+The current implementation is for qm-qua version 1.2.6.
+
+qm-qua requires a specific Python version (3.12 for qm-qua 1.2.6)
+The qm-qua package is only distributed via pip, not conda.
+To prepare a conda environment use
+
+    conda create -n qm -c conda-forge python=3.12
+    conda activate qm
+    pip install qm-qua==1.2.6 qualang-tools
+    conda install -c conda-forge numpy scipy matplotlib
+
+The pipeline and standalone scripts depend on further packages,
+in particular the instruments package from https://github.com/QCMX/instruments
+and
+
+    conda install -c conda-forge qcodes pyvisa pyvisa-py
+
+## qmtools
+
+(not specified yet. qmtools module should become qmtools package)
+
+## standalone scripts
+
+Run directly from folder.
